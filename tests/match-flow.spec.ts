@@ -2,6 +2,26 @@ import { expect, test } from "@playwright/test";
 
 const storageKey = "squora-referee-note-match-v1";
 
+test("erlaubt eigene Halbzeitlängen für F- und G-Jugend", async ({ page }) => {
+  await page.goto("/");
+  const ageGroup = page.locator("select");
+  const duration = page.locator('input[type="number"]');
+
+  await ageGroup.selectOption("F");
+  await expect(duration).toBeEnabled();
+  await duration.fill("17");
+  await expect(page.getByText("2 × 17 Minuten", { exact: true })).toBeVisible();
+
+  await ageGroup.selectOption("G");
+  await expect(duration).toBeEnabled();
+  await duration.fill("12");
+  await expect(page.getByText("2 × 12 Minuten", { exact: true })).toBeVisible();
+
+  await ageGroup.selectOption("D");
+  await expect(duration).toBeDisabled();
+  await expect(duration).toHaveValue("30");
+});
+
 test("führt ein Jugendspiel mit Tor, Wechsel, Karten und Spielende", async ({ page }) => {
   await page.goto("/");
   await page.getByLabel("Name der Heimmannschaft").fill("SV Blau");
@@ -10,14 +30,14 @@ test("führt ein Jugendspiel mit Tor, Wechsel, Karten und Spielende", async ({ p
   await page.locator('input[type="number"]').fill("1");
   await page.getByRole("button", { name: "Spiel starten" }).click();
 
-  await page.locator(".team-actions.home").getByRole("button", { name: /Tor/ }).click();
-  await page.locator(".modal input").fill("2");
+  await page.locator(".team-actions.home").getByRole("button", { name: "Tor Heim", exact: true }).click();
+  await page.locator(".modal input").first().fill("2");
   await page.getByRole("button", { name: "Ereignis speichern" }).click();
   await expect(page.locator(".score")).toContainText("1");
   await expect(page.getByText("Tor SV Blau · Nr. 2", { exact: true })).toBeVisible();
 
-  await page.locator(".team-actions.away").getByRole("button", { name: /Gelb/ }).click();
-  await page.locator(".modal input").fill("7");
+  await page.locator(".team-actions.away").getByRole("button", { name: "Gelb Gast", exact: true }).click();
+  await page.locator(".modal input").first().fill("7");
   await page.getByRole("button", { name: "Ereignis speichern" }).click();
 
   await page.evaluate((key) => {

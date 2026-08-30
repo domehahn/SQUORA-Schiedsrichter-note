@@ -1,171 +1,756 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "./icons";
+import { EventDialog, type DialogRequest } from "./EventDialog";
+import { MatchReport } from "./MatchReport";
+import { useWakeLock } from "./useWakeLock";
+import { cue, unlockAudio } from "./notify";
+import {
+  applyDeletions,
+  fetchRemote,
+  mergeArchives,
+  pushRemote,
+  sanitizeArchive,
+  type CloudData,
+  type RemotePayload,
+  type SyncState,
+} from "./sync";
 import {
   ageGroups,
-  currentHalfMs,
+  ageRules,
+  activePeriodTargetMs,
+  activeTimePenalties,
+  buildEventLabel,
+  createMatch,
+  currentPeriodMs,
   displayMinute,
+  eventMeta,
   formatClock,
-  initialMatch,
+  formatDate,
+  formatWallClock,
+  hadExtraTime,
+  hasPriorYellow,
+  matchDateLabel,
   matchTimeMs,
-  regulationMs,
+  normalizeMatch,
+  sanctions,
   score,
-  type EventKind,
+  shootoutTally,
+  substitutionCount,
+  teamName,
+  todayIso,
+  uid,
+  type ActionKind,
   type MatchEvent,
+  type MatchMeta,
+  type MatchPhase,
   type MatchState,
+  type Player,
+  type SavedMatch,
   type TeamSide,
 } from "./match";
+import {
+  createFixture,
+  createTournament,
+  mergeTournaments,
+  sanitizeTournaments,
+  standings,
+  type Fixture,
+  type Tournament,
+} from "./tournament";
+import { createSavedTeam, mergeTeams, sanitizeTeams, type SavedTeam } from "./teams";
+import { seasonStats, statsCsvRows } from "./stats";
 
 const STORAGE_KEY = "squora-referee-note-match-v1";
-type DialogAction = Exclude<EventKind, "period">;
-type DialogState = { action: DialogAction; team: TeamSide } | null;
+const ARCHIVE_KEY = "squora-referee-note-archive-v1";
+const DELETED_KEY = "squora-referee-note-deleted-v1";
+const TOURNAMENTS_KEY = "squora-referee-note-tournaments-v1";
+const TEAMS_KEY = "squora-referee-note-teams-v1";
+const SOUND_KEY = "squora-referee-note-sound-v1";
+const EDITABLE_DURATION_GROUPS = new Set(["F", "G", "custom"]);
+const TIME_RE = /^(\d{1,3}):([0-5]?\d)$/;
+
+const RUNNING_FIELD_BY_PHASE: Partial<Record<MatchPhase, "firstHalfMs" | "secondHalfMs" | "extraFirstMs" | "extraSecondMs">> = {
+  firstHalf: "firstHalfMs",
+  secondHalf: "secondHalfMs",
+  extraFirst: "extraFirstMs",
+  extraSecond: "extraSecondMs",
+};
+
+function seasonBounds(today = new Date()): { from: string; to: string } {
+  const year = today.getFullYear();
+  const startYear = today.getMonth() >= 6 ? year : year - 1; // Saison ab 1. Juli
+  return { from: `${startYear}-07-01`, to: `${startYear + 1}-06-30` };
+}
+
+const nowIso = () => new Date().toISOString();
+
+function parseTimeText(text: string): number | null {
+  const match = TIME_RE.exec(text.trim());
+  return match ? (Number(match[1]) * 60 + Number(match[2])) * 1000 : null;
+}
 
 function loadMatch(): MatchState {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (!saved) return initialMatch;
-    const parsed = JSON.parse(saved) as MatchState;
-    return parsed.version === 1 ? parsed : initialMatch;
+    return saved ? normalizeMatch(JSON.parse(saved)) : createMatch();
   } catch {
-    return initialMatch;
+    return createMatch();
   }
+}
+
+function loadArchive(): SavedMatch[] {
+  try {
+    return sanitizeArchive(JSON.parse(localStorage.getItem(ARCHIVE_KEY) ?? "[]"));
+  } catch {
+    return [];
+  }
+}
+
+function loadDeleted(): string[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(DELETED_KEY) ?? "[]") as unknown;
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function loadTournaments(): Tournament[] {
+  try {
+    return sanitizeTournaments(JSON.parse(localStorage.getItem(TOURNAMENTS_KEY) ?? "[]"));
+  } catch {
+    return [];
+  }
+}
+
+function loadTeams(): SavedTeam[] {
+  try {
+    return sanitizeTeams(JSON.parse(localStorage.getItem(TEAMS_KEY) ?? "[]"));
+  } catch {
+    return [];
+  }
+}
+
+function loadSound(): boolean {
+  try {
+    return localStorage.getItem(SOUND_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+const syncStatusLabel: Record<SyncState, string> = {
+  idle: "Auf diesem Gerät gespeichert",
+  syncing: "Wird synchronisiert…",
+  synced: "Geräteübergreifend gespeichert",
+  offline: "Offline · nur auf diesem Gerät",
+  error: "Sync-Fehler · erneut versuchen",
+};
+
+interface Notice {
+  text: string;
+  undo?: MatchState;
 }
 
 function App() {
   const [match, setMatch] = useState<MatchState>(loadMatch);
+  const [archive, setArchive] = useState<SavedMatch[]>(loadArchive);
+  const [deletedIds, setDeletedIds] = useState<string[]>(loadDeleted);
+  const [tournaments, setTournaments] = useState<Tournament[]>(loadTournaments);
+  const [teams, setTeams] = useState<SavedTeam[]>(loadTeams);
+  const [soundOn, setSoundOn] = useState<boolean>(loadSound);
+  const [sessionExpired, setSessionExpired] = useState(false);
+  const [syncState, setSyncState] = useState<SyncState>("idle");
+  const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
   const [now, setNow] = useState(Date.now());
-  const [dialog, setDialog] = useState<DialogState>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<DialogRequest | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const [printTarget, setPrintTarget] = useState<MatchState | null>(null);
+  const [printTournament, setPrintTournament] = useState<Tournament | null>(null);
+  const [openPanel, setOpenPanel] = useState<"cards" | "meta" | "roster" | "teams" | "tournaments" | "stats" | null>(null);
+  const [showLog, setShowLog] = useState(true);
+  const [statsRange, setStatsRange] = useState(() => seasonBounds());
+
   const noticeTimer = useRef<number | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const bootstrapped = useRef(false);
+  const latest = useRef<CloudData>({ archive, deletedIds, tournaments, teams, current: match });
+  latest.current = { archive, deletedIds, tournaments, teams, current: match };
+
+  useWakeLock(match.runningSince !== null);
+
+  useEffect(() => localStorage.setItem(STORAGE_KEY, JSON.stringify(match)), [match]);
+  useEffect(() => localStorage.setItem(ARCHIVE_KEY, JSON.stringify(archive)), [archive]);
+  useEffect(() => localStorage.setItem(DELETED_KEY, JSON.stringify(deletedIds)), [deletedIds]);
+  useEffect(() => localStorage.setItem(TOURNAMENTS_KEY, JSON.stringify(tournaments)), [tournaments]);
+  useEffect(() => localStorage.setItem(TEAMS_KEY, JSON.stringify(teams)), [teams]);
+  useEffect(() => { try { localStorage.setItem(SOUND_KEY, soundOn ? "1" : "0"); } catch { /* ignore */ } }, [soundOn]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(match));
-  }, [match]);
+    const check = async () => {
+      try {
+        const response = await fetch(`${import.meta.env.BASE_URL}api/archive`, { headers: { Accept: "application/json" } });
+        if (response.status === 401) setSessionExpired(true);
+      } catch {
+        /* offline – ignore */
+      }
+    };
+    const id = window.setInterval(check, 4 * 60 * 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const reconcile = (remote: RemotePayload): CloudData => {
+    const mergedDeleted = [...new Set([...latest.current.deletedIds, ...remote.deletedIds])];
+    const mergedArchive = applyDeletions(mergeArchives(latest.current.archive, remote.archive), mergedDeleted);
+    const mergedTournaments = mergeTournaments(latest.current.tournaments, remote.tournaments);
+    const mergedTeams = mergeTeams(latest.current.teams, remote.teams);
+    setArchive(mergedArchive);
+    setDeletedIds(mergedDeleted);
+    setTournaments(mergedTournaments);
+    setTeams(mergedTeams);
+
+    let current = latest.current.current;
+    if (remote.current && current && current.phase === "setup" && current.events.length === 0 && remote.current.id !== current.id) {
+      current = remote.current;
+      setMatch(remote.current);
+    }
+    return { archive: mergedArchive, deletedIds: mergedDeleted, tournaments: mergedTournaments, teams: mergedTeams, current };
+  };
 
   useEffect(() => {
-    if (match.runningSince === null) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 250);
+    let cancelled = false;
+    setSyncState("syncing");
+    fetchRemote().then(async (remote) => {
+      if (cancelled) return;
+      if (!remote) {
+        setSyncState("offline");
+        bootstrapped.current = true;
+        return;
+      }
+      const merged = reconcile(remote);
+      const ok = await pushRemote(merged);
+      if (cancelled) return;
+      setSyncState(ok ? "synced" : "offline");
+      if (ok) setLastSyncedAt(Date.now());
+      bootstrapped.current = true;
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!bootstrapped.current) return;
+    setSyncState("syncing");
+    const handle = window.setTimeout(async () => {
+      const ok = await pushRemote({ archive, deletedIds, tournaments, teams, current: match });
+      setSyncState(ok ? "synced" : "error");
+      if (ok) setLastSyncedAt(Date.now());
+    }, 1500);
+    return () => window.clearTimeout(handle);
+  }, [archive, deletedIds, tournaments, teams, match]);
+
+  const inBreakPhase = match.phase === "halfTime" || match.phase === "extraBreak";
+  useEffect(() => {
+    const period = match.runningSince !== null ? 250 : inBreakPhase ? 500 : 20000;
+    const timer = window.setInterval(() => setNow(Date.now()), period);
     return () => window.clearInterval(timer);
-  }, [match.runningSince]);
+  }, [match.runningSince, inBreakPhase]);
 
-  const periodMs = regulationMs(match);
-  const halfMs = currentHalfMs(match, now);
-  const activeHalf = match.phase === "firstHalf" || match.phase === "secondHalf";
-  const canRecord = activeHalf;
+  useEffect(() => {
+    if (!printTarget && !printTournament) return;
+    const timer = window.setTimeout(() => window.print(), 80);
+    const clear = () => {
+      setPrintTarget(null);
+      setPrintTournament(null);
+    };
+    window.addEventListener("afterprint", clear);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("afterprint", clear);
+    };
+  }, [printTarget, printTournament]);
+
+  const isArchived = archive.some((entry) => entry.state.id === match.id);
+
+  const inPlay = match.phase !== "setup" && match.phase !== "finished" && match.phase !== "abandoned";
+  useEffect(() => {
+    const dirty = inPlay || (match.events.length > 0 && !isArchived);
+    if (!dirty) return;
+    const handler = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [match.phase, match.events.length, isArchived]);
+
+  const runningField = RUNNING_FIELD_BY_PHASE[match.phase];
+  const activeHalf = Boolean(runningField);
+  const inBreak = match.phase === "halfTime" || match.phase === "extraBreak";
+  const inShootout = match.phase === "shootout";
+  const canRecord = activeHalf || inBreak;
+  const periodMs = currentPeriodMs(match, now);
+  const periodTargetMs = activePeriodTargetMs(match);
+  const periodUnlocked = periodMs >= periodTargetMs;
+  const stoppageMs = Math.max(0, periodMs - periodTargetMs);
+  const stoppageTargetMs = periodTargetMs + match.announcedStoppageMin * 60_000;
+  const reachedStoppageTarget = activeHalf && match.announcedStoppageMin > 0 && periodMs >= stoppageTargetMs;
+  const breakRemainingMs = inBreak && match.breakStartedAt
+    ? match.breakDurationMin * 60_000 - (now - new Date(match.breakStartedAt).getTime())
+    : 0;
   const homeScore = score(match.events, "home");
   const awayScore = score(match.events, "away");
-  const stoppageMs = Math.max(0, halfMs - periodMs);
+  const level = homeScore === awayScore;
+  const liveMatchMs = matchTimeMs(match, now);
+  const penalties = activeTimePenalties(match.events, liveMatchMs);
+  const shoot = shootoutTally(match.shootout);
 
-  const flash = (message: string) => {
-    setNotice(message);
+  const flash = (text: string, undo?: MatchState) => {
+    setNotice({ text, undo });
     if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
-    noticeTimer.current = window.setTimeout(() => setNotice(null), 2600);
+    noticeTimer.current = window.setTimeout(() => setNotice(null), undo ? 6000 : 2600);
   };
+
+  const buzz = (kind: Parameters<typeof cue>[0]) => cue(kind, soundOn);
+
+  const patchMatch = (patch: Partial<MatchState>) => setMatch((state) => ({ ...state, ...patch, updatedAt: nowIso() }));
+
+  const stoppageAlerted = useRef<string | null>(null);
+  useEffect(() => {
+    if (!reachedStoppageTarget) return;
+    const key = `${match.phase}-${match.announcedStoppageMin}`;
+    if (stoppageAlerted.current === key) return;
+    stoppageAlerted.current = key;
+    buzz("alert");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reachedStoppageTarget, match.phase, match.announcedStoppageMin]);
+
+  const breakAlerted = useRef<string | null>(null);
+  useEffect(() => {
+    if (!inBreak) {
+      breakAlerted.current = null;
+      return;
+    }
+    if (match.breakStartedAt && breakRemainingMs <= 0 && breakAlerted.current !== match.breakStartedAt) {
+      breakAlerted.current = match.breakStartedAt;
+      buzz("alert");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inBreak, match.breakStartedAt, breakRemainingMs <= 0]);
 
   const freezeClock = (state: MatchState, timestamp: number): MatchState => {
     if (state.runningSince === null) return state;
+    const field = RUNNING_FIELD_BY_PHASE[state.phase];
+    if (!field) return { ...state, runningSince: null };
     const elapsed = Math.max(0, timestamp - state.runningSince);
-    return state.phase === "secondHalf"
-      ? { ...state, secondHalfMs: state.secondHalfMs + elapsed, runningSince: null }
-      : { ...state, firstHalfMs: state.firstHalfMs + elapsed, runningSince: null };
+    return { ...state, [field]: state[field] + elapsed, runningSince: null };
   };
 
   const addPeriodEvent = (state: MatchState, label: string, timestamp: number): MatchState => {
     const timeMs = matchTimeMs(state, timestamp);
     const event: MatchEvent = {
-      id: crypto.randomUUID(), kind: "period", matchMs: timeMs, exactTime: formatClock(timeMs),
-      minute: displayMinute(timeMs), label, createdAt: new Date().toISOString(),
+      id: uid(), kind: "period", matchMs: timeMs, exactTime: formatClock(timeMs),
+      minute: displayMinute(timeMs), label, createdAt: nowIso(),
     };
     return { ...state, events: [...state.events, event] };
   };
 
+  const stoppageSuffix = (state: MatchState) => (state.announcedStoppageMin > 0 ? ` (+${state.announcedStoppageMin} angezeigt)` : "");
+
   const startMatch = () => {
+    unlockAudio();
     const timestamp = Date.now();
     setNow(timestamp);
-    setMatch((state) => addPeriodEvent({ ...state, phase: "firstHalf", runningSince: timestamp, startedAt: new Date(timestamp).toISOString() }, "Anpfiff · 1. Halbzeit", timestamp));
+    setMatch((state) => addPeriodEvent({ ...state, phase: "firstHalf", runningSince: timestamp, startedAt: new Date(timestamp).toISOString(), updatedAt: nowIso() }, "Anpfiff · 1. Halbzeit", timestamp));
+    buzz("half");
   };
 
   const toggleClock = () => {
     const timestamp = Date.now();
     setNow(timestamp);
-    setMatch((state) => state.runningSince === null ? { ...state, runningSince: timestamp } : freezeClock(state, timestamp));
+    setMatch((state) => state.runningSince === null
+      ? { ...state, runningSince: timestamp, updatedAt: nowIso() }
+      : { ...freezeClock(state, timestamp), updatedAt: nowIso() });
   };
 
   const finishFirstHalf = () => {
-    if (halfMs < periodMs) return;
+    if (!periodUnlocked) return;
     const timestamp = Date.now();
     setNow(timestamp);
+    const snapshot = match;
     setMatch((state) => {
       const frozen = freezeClock(state, timestamp);
-      return { ...addPeriodEvent(frozen, "Halbzeit", timestamp), phase: "halfTime" };
+      return { ...addPeriodEvent(frozen, `Halbzeit${stoppageSuffix(state)}`, timestamp), phase: "halfTime", breakStartedAt: new Date(timestamp).toISOString(), announcedStoppageMin: 0, updatedAt: nowIso() };
     });
-    flash("Halbzeit gespeichert");
+    buzz("half");
+    flash("Halbzeit gespeichert", snapshot);
   };
 
   const startSecondHalf = () => {
     const timestamp = Date.now();
     setNow(timestamp);
-    setMatch((state) => addPeriodEvent({ ...state, phase: "secondHalf", runningSince: timestamp }, "Anpfiff · 2. Halbzeit", timestamp));
+    setMatch((state) => addPeriodEvent({ ...state, phase: "secondHalf", runningSince: timestamp, breakStartedAt: null, updatedAt: nowIso() }, "Anpfiff · 2. Halbzeit", timestamp));
+    buzz("half");
   };
 
   const finishMatch = () => {
-    if (halfMs < periodMs) return;
+    if (!periodUnlocked) return;
+    const timestamp = Date.now();
+    setNow(timestamp);
+    const snapshot = match;
+    setMatch((state) => {
+      const frozen = freezeClock(state, timestamp);
+      return { ...addPeriodEvent(frozen, `Spielende${stoppageSuffix(state)}`, timestamp), phase: "finished", finishedAt: new Date(timestamp).toISOString(), announcedStoppageMin: 0, updatedAt: nowIso() };
+    });
+    buzz("end");
+    flash("Spielbericht ist abgeschlossen", snapshot);
+  };
+
+  const startExtraTime = () => {
+    if (!periodUnlocked) return;
     const timestamp = Date.now();
     setNow(timestamp);
     setMatch((state) => {
       const frozen = freezeClock(state, timestamp);
-      return { ...addPeriodEvent(frozen, "Spielende", timestamp), phase: "finished", finishedAt: new Date(timestamp).toISOString() };
+      return { ...addPeriodEvent(frozen, "Beginn Verlängerung · 1. Halbzeit", timestamp), phase: "extraFirst", extraFirstMs: 0, runningSince: timestamp, announcedStoppageMin: 0, updatedAt: nowIso() };
     });
-    flash("Spielbericht ist abgeschlossen");
+    buzz("half");
+    flash("Verlängerung gestartet");
   };
 
-  const saveEvent = (data: { player?: string; playerIn?: string; playerOut?: string }) => {
-    if (!dialog) return;
+  const finishExtraFirst = () => {
+    if (!periodUnlocked) return;
     const timestamp = Date.now();
-    const timeMs = matchTimeMs(match, timestamp);
-    const teamName = dialog.team === "home" ? match.homeTeam : match.awayTeam;
-    const labels: Record<DialogAction, string> = {
-      goal: `Tor ${teamName} · Nr. ${data.player}`,
-      substitution: `Wechsel ${teamName} · Nr. ${data.playerOut} raus, Nr. ${data.playerIn} rein`,
-      yellow: `Gelbe Karte ${teamName} · Nr. ${data.player}`,
-      red: `Rote Karte ${teamName} · Nr. ${data.player}`,
+    setNow(timestamp);
+    setMatch((state) => {
+      const frozen = freezeClock(state, timestamp);
+      return { ...addPeriodEvent(frozen, `Ende 1. Halbzeit Verlängerung${stoppageSuffix(state)}`, timestamp), phase: "extraBreak", breakStartedAt: new Date(timestamp).toISOString(), announcedStoppageMin: 0, updatedAt: nowIso() };
+    });
+    buzz("half");
+  };
+
+  const startExtraSecond = () => {
+    const timestamp = Date.now();
+    setNow(timestamp);
+    setMatch((state) => addPeriodEvent({ ...state, phase: "extraSecond", runningSince: timestamp, breakStartedAt: null, updatedAt: nowIso() }, "Beginn 2. Halbzeit Verlängerung", timestamp));
+    buzz("half");
+  };
+
+  const finishExtraTime = () => {
+    if (!periodUnlocked) return;
+    const timestamp = Date.now();
+    setNow(timestamp);
+    setMatch((state) => {
+      const frozen = freezeClock(state, timestamp);
+      const stillLevel = score(state.events, "home") === score(state.events, "away");
+      if (state.knockout && stillLevel) {
+        return { ...addPeriodEvent(frozen, `Ende Verlängerung${stoppageSuffix(state)} · Elfmeterschießen`, timestamp), phase: "shootout", announcedStoppageMin: 0, updatedAt: nowIso() };
+      }
+      return { ...addPeriodEvent(frozen, `Spielende n. Verl.${stoppageSuffix(state)}`, timestamp), phase: "finished", finishedAt: new Date(timestamp).toISOString(), announcedStoppageMin: 0, updatedAt: nowIso() };
+    });
+    buzz("end");
+  };
+
+  const recordShootout = (scored: boolean) => {
+    const timestamp = Date.now();
+    setNow(timestamp);
+    setMatch((state) => {
+      const tally = shootoutTally(state.shootout);
+      return { ...state, shootout: [...state.shootout, { id: uid(), team: tally.nextTeam, scored }], updatedAt: nowIso() };
+    });
+    buzz("event");
+  };
+
+  const undoShootout = () => {
+    setMatch((state) => ({ ...state, shootout: state.shootout.slice(0, -1), updatedAt: nowIso() }));
+  };
+
+  const finishShootout = () => {
+    const tally = shootoutTally(match.shootout);
+    if (!tally.decided) return;
+    const timestamp = Date.now();
+    setNow(timestamp);
+    const winnerName = tally.winner === "home" ? teamName(match, "home") : teamName(match, "away");
+    setMatch((state) => ({
+      ...addPeriodEvent(state, `Sieg im Elfmeterschießen: ${winnerName} (${tally.home}:${tally.away})`, timestamp),
+      phase: "finished",
+      finishedAt: new Date(timestamp).toISOString(),
+      updatedAt: nowIso(),
+    }));
+    buzz("end");
+    flash(`${winnerName} gewinnt im Elfmeterschießen`);
+  };
+
+  const announceStoppage = () => {
+    const input = window.prompt("Nachspielzeit ansagen (Minuten, 0 = keine):", String(match.announcedStoppageMin || ""));
+    if (input === null) return;
+    const minutes = Math.max(0, Math.min(30, Math.round(Number(input) || 0)));
+    patchMatch({ announcedStoppageMin: minutes });
+    flash(minutes > 0 ? `Nachspielzeit +${minutes} min angesagt` : "Nachspielzeit-Ansage entfernt");
+  };
+
+  const abandonMatch = () => {
+    const reason = window.prompt("Grund für den Spielabbruch:", match.meta.abandonedReason || "");
+    if (reason === null) return;
+    const timestamp = Date.now();
+    setNow(timestamp);
+    const snapshot = match;
+    setMatch((state) => {
+      const frozen = freezeClock(state, timestamp);
+      return {
+        ...addPeriodEvent(frozen, `Spielabbruch – ${reason.trim() || "ohne Angabe"}`, timestamp),
+        phase: "abandoned",
+        finishedAt: new Date(timestamp).toISOString(),
+        meta: { ...state.meta, abandonedReason: reason.trim() },
+        updatedAt: nowIso(),
+      };
+    });
+    buzz("end");
+    flash("Spielabbruch dokumentiert", snapshot);
+  };
+
+  const correctClock = () => {
+    const field = RUNNING_FIELD_BY_PHASE[match.phase];
+    if (!field) {
+      flash("Uhr nur während einer laufenden Halbzeit korrigierbar");
+      return;
+    }
+    const input = window.prompt("Laufzeit dieser Halbzeit auf MM:SS setzen:", formatClock(periodMs));
+    if (input === null) return;
+    const target = parseTimeText(input);
+    if (target === null) {
+      flash("Bitte im Format MM:SS eingeben");
+      return;
+    }
+    const timestamp = Date.now();
+    const snapshot = match;
+    setMatch((state) => ({ ...state, [field]: target, runningSince: state.runningSince !== null ? timestamp : null, updatedAt: nowIso() }));
+    setNow(timestamp);
+    flash("Uhr korrigiert", snapshot);
+  };
+
+  const handleDialogSave = ({ kind, data, timeText }: Parameters<React.ComponentProps<typeof EventDialog>["onSave"]>[0]) => {
+    if (!dialog) return;
+    const snapshot = match;
+    const timeMs = parseTimeText(timeText) ?? liveMatchMs;
+    const team = dialog.team;
+    const label = buildEventLabel(kind, team ? teamName(match, team) : "Spielabschnitt", data);
+    const shared = {
+      kind, team,
+      player: data.player, playerName: data.playerName,
+      playerIn: data.playerIn, playerInName: data.playerInName,
+      playerOut: data.playerOut, playerOutName: data.playerOutName,
+      durationMin: data.durationMin, text: data.text,
+      matchMs: timeMs, exactTime: formatClock(timeMs), minute: displayMinute(timeMs), label,
     };
-    const event: MatchEvent = {
-      id: crypto.randomUUID(), kind: dialog.action, team: dialog.team, ...data,
-      matchMs: timeMs, exactTime: formatClock(timeMs), minute: displayMinute(timeMs),
-      label: labels[dialog.action], createdAt: new Date().toISOString(),
-    };
-    setMatch((state) => ({ ...state, events: [...state.events, event] }));
+
+    if (dialog.mode === "edit" && dialog.event) {
+      const id = dialog.event.id;
+      const createdAt = dialog.event.createdAt;
+      setMatch((state) => ({
+        ...state,
+        updatedAt: nowIso(),
+        events: state.events
+          .map((event) => (event.id === id ? { id, createdAt, editedAt: nowIso(), ...shared } : event))
+          .sort((a, b) => a.matchMs - b.matchMs),
+      }));
+      flash("Ereignis aktualisiert", snapshot);
+    } else {
+      const event: MatchEvent = { id: uid(), createdAt: nowIso(), ...shared };
+      setMatch((state) => ({ ...state, updatedAt: nowIso(), events: [...state.events, event].sort((a, b) => a.matchMs - b.matchMs) }));
+      flash(`${label} gespeichert`, snapshot);
+    }
     setDialog(null);
-    flash(`${labels[dialog.action]} gespeichert`);
+  };
+
+  const editEvent = (event: MatchEvent) => {
+    if (event.kind === "period") return;
+    setDialog({ mode: "edit", action: event.kind as ActionKind, team: event.team, event });
   };
 
   const deleteEvent = (id: string) => {
-    setMatch((state) => ({ ...state, events: state.events.filter((event) => event.id !== id) }));
-    flash("Eintrag entfernt");
+    const snapshot = match;
+    setMatch((state) => ({ ...state, updatedAt: nowIso(), events: state.events.filter((event) => event.id !== id) }));
+    flash("Eintrag entfernt", snapshot);
   };
 
   const resetMatch = () => {
-    if (!window.confirm("Neues Spiel beginnen? Das aktuelle Protokoll wird auf diesem Gerät gelöscht.")) return;
-    setMatch(initialMatch);
+    const warning = isArchived || match.events.length === 0
+      ? "Neues Spiel beginnen?"
+      : "Neues Spiel beginnen? Das aktuelle Protokoll ist nicht gespeichert und wird von diesem Gerät entfernt.";
+    if (!window.confirm(warning)) return;
+    setMatch(createMatch());
     setNow(Date.now());
   };
 
-  const exportCsv = () => {
-    const rows = [
-      ["Spielzeit", "Minute", "Ereignis", "Mannschaft", "Spieler", "Raus", "Rein"],
-      ...match.events.map((event) => [event.exactTime, String(event.minute), event.label, event.team === "home" ? match.homeTeam : event.team === "away" ? match.awayTeam : "", event.player ?? "", event.playerOut ?? "", event.playerIn ?? ""]),
-    ];
-    const csv = rows.map((row) => row.map((cell) => `"${cell.replaceAll('"', '""')}"`).join(";")).join("\r\n");
-    const blob = new Blob(["\ufeff", csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `spielbericht-${match.homeTeam}-${match.awayTeam}.csv`.replace(/[^a-z0-9äöüß.-]+/gi, "-").toLowerCase();
-    link.click();
-    URL.revokeObjectURL(url);
+  const saveCurrentMatch = () => {
+    const stamped: MatchState = { ...match, runningSince: null, updatedAt: nowIso() };
+    setArchive((list) => [{ savedAt: nowIso(), state: stamped }, ...list.filter((item) => item.state.id !== match.id)]
+      .sort((a, b) => b.savedAt.localeCompare(a.savedAt)));
+    setDeletedIds((ids) => ids.filter((id) => id !== match.id));
+    if (match.tournamentId && match.fixtureId) {
+      setTournaments((list) => list.map((tournament) => tournament.id !== match.tournamentId ? tournament : {
+        ...tournament,
+        updatedAt: nowIso(),
+        fixtures: tournament.fixtures.map((fixture) => fixture.id === match.fixtureId
+          ? { ...fixture, matchId: match.id, home: fixture.home || match.homeTeam, away: fixture.away || match.awayTeam }
+          : fixture),
+      }));
+    }
+    flash(isArchived ? "Gespeichertes Spiel aktualisiert" : "Spiel gespeichert");
   };
 
-  const phaseLabel = useMemo(() => ({ setup: "Spielvorbereitung", firstHalf: "1. Halbzeit", halfTime: "Halbzeit", secondHalf: "2. Halbzeit", finished: "Beendet" })[match.phase], [match.phase]);
+  const openSavedMatch = (id: string) => {
+    const entry = archive.find((item) => item.state.id === id);
+    if (!entry) return;
+    if (!isArchived && match.events.length > 0 &&
+      !window.confirm("Das aktuelle Protokoll ist nicht gespeichert. Trotzdem ein gespeichertes Spiel öffnen?")) return;
+    setMatch({ ...entry.state, runningSince: null });
+    setNow(Date.now());
+    setDialog(null);
+    flash("Gespeichertes Spiel geladen");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const deleteSavedMatch = (id: string) => {
+    if (!window.confirm("Dieses gespeicherte Spiel endgültig löschen? Es wird auch auf den anderen Geräten entfernt.")) return;
+    setArchive((list) => list.filter((item) => item.state.id !== id));
+    setDeletedIds((ids) => (ids.includes(id) ? ids : [...ids, id]));
+    flash("Gespeichertes Spiel gelöscht");
+  };
+
+  const syncNow = async () => {
+    setSyncState("syncing");
+    const remote = await fetchRemote();
+    if (!remote) {
+      setSyncState("error");
+      flash("Synchronisierung fehlgeschlagen");
+      return;
+    }
+    const merged = reconcile(remote);
+    const ok = await pushRemote(merged);
+    setSyncState(ok ? "synced" : "error");
+    if (ok) setLastSyncedAt(Date.now());
+    flash(ok ? "Synchronisiert" : "Synchronisierung fehlgeschlagen");
+  };
+
+  const exportAll = () => {
+    downloadJson(`squora-schiri-${todayIso()}.json`, {
+      app: "squora-schiedsrichter-note",
+      version: 2,
+      exportedAt: nowIso(),
+      current: match,
+      archive,
+      tournaments,
+    });
+    flash("Daten exportiert");
+  };
+
+  const importAll = async (file: File) => {
+    try {
+      const data = JSON.parse(await file.text()) as { current?: unknown; archive?: unknown; tournaments?: unknown };
+      const incoming = sanitizeArchive(data.archive);
+      const incomingTournaments = sanitizeTournaments(data.tournaments);
+      const incomingCurrent = data.current ? normalizeMatch(data.current) : null;
+      if (!incoming.length && !incomingTournaments.length && !incomingCurrent) {
+        flash("Keine gültigen Daten in der Datei");
+        return;
+      }
+      const replace = incoming.length > 0 && window.confirm(
+        `${incoming.length} gespeicherte(s) Spiel(e) in der Datei.\n\nOK = vorhandenes Archiv ERSETZEN\nAbbrechen = mit vorhandenem Archiv zusammenführen`,
+      );
+      setArchive((list) => (replace ? mergeArchives(incoming) : mergeArchives(list, incoming)));
+      if (replace) setDeletedIds([]);
+      if (incomingTournaments.length) setTournaments((list) => mergeTournaments(list, incomingTournaments));
+      if (incomingCurrent && match.phase === "setup" && match.events.length === 0) setMatch({ ...incomingCurrent, runningSince: null });
+      flash(replace ? "Archiv ersetzt" : "Daten zusammengeführt");
+    } catch {
+      flash("Die Datei konnte nicht gelesen werden");
+    }
+  };
+
+  const startFixture = (tournament: Tournament, fixture: Fixture) => {
+    if (!isArchived && match.events.length > 0 &&
+      !window.confirm("Das aktuelle Protokoll ist nicht gespeichert. Neues Spiel aus der Ansetzung starten?")) return;
+    setMatch(createMatch({
+      homeTeam: fixture.home || "Heim",
+      awayTeam: fixture.away || "Gast",
+      ageGroup: tournament.ageGroup,
+      halfDurationMinutes: tournament.halfDurationMinutes,
+      matchDate: tournament.date || todayIso(),
+      tournamentId: tournament.id,
+      fixtureId: fixture.id,
+    }));
+    setNow(Date.now());
+    flash(`Angesetzt: ${fixture.home || "Heim"} – ${fixture.away || "Gast"}`);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const shareReport = async () => {
+    const lines = [
+      `${match.homeTeam} ${homeScore} : ${awayScore} ${match.awayTeam}${match.shootout.length ? ` (n.E. ${shoot.home}:${shoot.away})` : ""}`,
+      `${matchDateLabel(match)} · ${ageGroups.find((group) => group.value === match.ageGroup)?.label ?? match.ageGroup}`,
+      match.meta.venue && `Ort: ${match.meta.venue}`,
+      "",
+      ...match.events.filter((event) => event.kind !== "period").map((event) => `${event.minute}' ${event.label}`),
+    ].filter((line) => line !== undefined && line !== null) as string[];
+    const text = lines.join("\n");
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: `Spielbericht ${match.homeTeam} – ${match.awayTeam}`, text });
+      } else if (navigator.clipboard) {
+        await navigator.clipboard.writeText(text);
+        flash("Bericht in die Zwischenablage kopiert");
+      } else {
+        flash("Teilen wird von diesem Gerät nicht unterstützt");
+      }
+    } catch {
+      /* vom Nutzer abgebrochen */
+    }
+  };
+
+  const saveTeamToLibrary = (side: TeamSide) => {
+    const name = (side === "home" ? match.homeTeam : match.awayTeam).trim();
+    const roster = side === "home" ? match.homeRoster : match.awayRoster;
+    if (!name) {
+      flash("Bitte zuerst einen Mannschaftsnamen eingeben");
+      return;
+    }
+    const existing = teams.find((team) => team.name.toLowerCase() === name.toLowerCase());
+    if (existing) {
+      setTeams((list) => list.map((team) => (team.id === existing.id ? { ...team, roster, updatedAt: nowIso() } : team)));
+      flash(`„${name}" in der Bibliothek aktualisiert`);
+    } else {
+      setTeams((list) => mergeTeams([createSavedTeam(name, "", roster)], list));
+      flash(`„${name}" zur Bibliothek hinzugefügt`);
+    }
+  };
+
+  const applyTeamFromLibrary = (side: TeamSide, teamId: string) => {
+    const team = teams.find((entry) => entry.id === teamId);
+    if (!team) return;
+    const roster = team.roster.map((player) => ({ ...player, id: uid() }));
+    patchMatch(side === "home"
+      ? { homeTeam: team.name || "Heim", homeRoster: roster }
+      : { awayTeam: team.name || "Gast", awayRoster: roster });
+    flash(`${team.name || "Team"} übernommen`);
+  };
+
+  const phaseLabel = useMemo(() => ({
+    setup: "Spielvorbereitung", firstHalf: "1. Halbzeit", halfTime: "Halbzeit",
+    secondHalf: "2. Halbzeit", extraFirst: "1. HZ Verlängerung", extraBreak: "Pause Verlängerung",
+    extraSecond: "2. HZ Verlängerung", shootout: "Elfmeterschießen", finished: "Beendet", abandoned: "Abgebrochen",
+  })[match.phase], [match.phase]);
+
+  const syncAgo = lastSyncedAt ? Math.max(0, Math.round((now - lastSyncedAt) / 1000)) : null;
+  const syncAgoText = syncAgo === null ? "noch nicht abgeglichen"
+    : syncAgo < 45 ? "gerade eben abgeglichen"
+    : syncAgo < 3600 ? `abgeglichen vor ${Math.round(syncAgo / 60)} min`
+    : `abgeglichen vor ${Math.round(syncAgo / 3600)} h`;
+
+  const orderedEvents = useMemo(() => [...match.events].sort((a, b) => a.matchMs - b.matchMs).reverse(), [match.events]);
 
   return (
     <div className="app-shell">
@@ -174,7 +759,17 @@ function App() {
           <img src={`${import.meta.env.BASE_URL}squora-logo.png`} alt="" />
           <span><strong>SQUORA</strong><small>Schiedsrichter Note</small></span>
         </a>
-        <div className="save-status"><span className="save-dot" /> Auf diesem Gerät gespeichert</div>
+        <div className="topbar-actions">
+          <button className="sound-toggle" aria-pressed={soundOn} title={soundOn ? "Signaltöne aus" : "Signaltöne an"} onClick={() => { unlockAudio(); setSoundOn((value) => !value); }}>
+            <Icon name={soundOn ? "sound" : "mute"} />
+          </button>
+          <button className={`save-status sync-${syncState}`} onClick={syncNow} title="Jetzt synchronisieren">
+            <span className="save-dot" /> <span className="save-text">{syncStatusLabel[syncState]}</span>
+          </button>
+          <form method="post" action={`${import.meta.env.BASE_URL}auth/logout`}>
+            <button className="logout-button" aria-label="Abmelden"><Icon name="logout" /><span>Abmelden</span></button>
+          </form>
+        </div>
       </header>
 
       <main id="top">
@@ -183,106 +778,847 @@ function App() {
             <div><span className="eyebrow">Spiel anlegen</span><h1 id="setup-title">Welche Jugend spielt heute?</h1></div>
             {match.phase !== "setup" && <button className="text-button danger-text" onClick={resetMatch}><Icon name="trash" /> Neues Spiel</button>}
           </div>
+          <label className="date-field"><span>Spieldatum</span><input type="date" value={match.matchDate} onChange={(event) => patchMatch({ matchDate: event.target.value || todayIso() })} /></label>
           <div className="setup-grid">
             <label><span>Jugend</span><select value={match.ageGroup} disabled={match.phase !== "setup"} onChange={(event) => {
               const selected = ageGroups.find((group) => group.value === event.target.value)!;
-              setMatch((state) => ({ ...state, ageGroup: selected.value, halfDurationMinutes: selected.minutes }));
+              patchMatch({ ageGroup: selected.value, halfDurationMinutes: selected.minutes });
             }}>{ageGroups.map((group) => <option key={group.value} value={group.value}>{group.label}</option>)}</select></label>
-            <label><span>Minuten je Halbzeit</span><div className="input-suffix"><input type="number" min="1" max="60" value={match.halfDurationMinutes} disabled={match.phase !== "setup" || match.ageGroup !== "custom"} onChange={(event) => setMatch((state) => ({ ...state, halfDurationMinutes: Number(event.target.value) || 1 }))}/><em>min</em></div></label>
+            <label><span>Minuten je Halbzeit</span><div className="input-suffix"><input type="number" min="1" max="60" value={match.halfDurationMinutes} disabled={match.phase !== "setup" || !EDITABLE_DURATION_GROUPS.has(match.ageGroup)} onChange={(event) => patchMatch({ halfDurationMinutes: Number(event.target.value) || 1 })} /><em>min</em></div></label>
             <div className="rule-hint"><Icon name="clock" /><span><strong>2 × {match.halfDurationMinutes} Minuten</strong><small>Nachspielzeit läuft automatisch weiter.</small></span></div>
           </div>
+
+          <div className="setup-extra">
+            <label className="checkbox-field">
+              <input type="checkbox" checked={match.knockout} disabled={match.phase !== "setup"} onChange={(event) => patchMatch({ knockout: event.target.checked })} />
+              <span>K.-o.-Spiel (Verlängerung &amp; Elfmeterschießen bei Gleichstand)</span>
+            </label>
+            {match.knockout && (
+              <label className="inline-num"><span>Verlängerung je Halbzeit</span><input type="number" min={1} max={30} value={match.extraDurationMinutes} disabled={match.phase !== "setup" && match.phase !== "secondHalf"} onChange={(event) => patchMatch({ extraDurationMinutes: Number(event.target.value) || 1 })} /><em>min</em></label>
+            )}
+          </div>
+
+          {ageRules[match.ageGroup] && (
+            <p className="age-rule">
+              <Icon name="book" />
+              <span>
+                <strong>{ageRules[match.ageGroup].players}</strong> · Ball {ageRules[match.ageGroup].ball} · {ageRules[match.ageGroup].field} · Abseits: {ageRules[match.ageGroup].offside} · Wechsel: {ageRules[match.ageGroup].subs}
+                <small>Richtwerte – die regionale Spielordnung gilt.</small>
+              </span>
+            </p>
+          )}
+
+          {teams.length > 0 && match.phase === "setup" && (
+            <div className="team-picker">
+              {(["home", "away"] as const).map((side) => (
+                <label key={side}>
+                  <span>{side === "home" ? "Heim aus Bibliothek" : "Gast aus Bibliothek"}</span>
+                  <select value="" onChange={(event) => { if (event.target.value) applyTeamFromLibrary(side, event.target.value); }}>
+                    <option value="">– Team wählen –</option>
+                    {teams.map((team) => <option key={team.id} value={team.id}>{team.name}{team.club ? ` (${team.club})` : ""} · {team.roster.length} Sp.</option>)}
+                  </select>
+                </label>
+              ))}
+            </div>
+          )}
+
+          {match.tournamentId && <p className="tournament-tag"><Icon name="trophy" /> Teil eines Turniers – beim Speichern wird das Ergebnis in die Tabelle übernommen.</p>}
         </section>
 
         <section className="scoreboard" aria-label="Spielstand und Spieluhr">
           <div className="stadium-glow" />
-          <div className="phase-pill"><span className={match.runningSince !== null ? "live-dot" : "idle-dot"}/>{phaseLabel}</div>
+          <div className="phase-pill"><span className={match.runningSince !== null ? "live-dot" : "idle-dot"} />{phaseLabel}</div>
           <div className="score-row">
-            <div className="team team-home"><label htmlFor="home-team">Heim</label><input id="home-team" aria-label="Name der Heimmannschaft" value={match.homeTeam} maxLength={40} onChange={(event) => setMatch((state) => ({ ...state, homeTeam: event.target.value }))}/></div>
+            <div className="team team-home"><label htmlFor="home-team">Heim</label><input id="home-team" aria-label="Name der Heimmannschaft" value={match.homeTeam} maxLength={40} onChange={(event) => patchMatch({ homeTeam: event.target.value })} /></div>
             <div className="score"><strong>{homeScore}</strong><span>:</span><strong>{awayScore}</strong></div>
-            <div className="team team-away"><label htmlFor="away-team">Gast</label><input id="away-team" aria-label="Name der Gastmannschaft" value={match.awayTeam} maxLength={40} onChange={(event) => setMatch((state) => ({ ...state, awayTeam: event.target.value }))}/></div>
+            <div className="team team-away"><label htmlFor="away-team">Gast</label><input id="away-team" aria-label="Name der Gastmannschaft" value={match.awayTeam} maxLength={40} onChange={(event) => patchMatch({ awayTeam: event.target.value })} /></div>
           </div>
           <div className="clock-block">
-            <div className="clock-time">{formatClock(activeHalf ? halfMs : match.phase === "finished" ? match.secondHalfMs : match.firstHalfMs)}</div>
-            {activeHalf && stoppageMs > 0 && <div className="stoppage">+ {formatClock(stoppageMs)} Nachspielzeit</div>}
-            <div className="clock-subtitle">{match.phase === "firstHalf" ? `von ${match.halfDurationMinutes}:00 · 1. Halbzeit` : match.phase === "secondHalf" ? `von ${match.halfDurationMinutes}:00 · 2. Halbzeit` : match.phase === "halfTime" ? "Uhr angehalten" : match.phase === "finished" ? `Endstand · ${match.events.filter((event) => event.kind !== "period").length} Ereignisse` : `Bereit für 2 × ${match.halfDurationMinutes} Minuten`}</div>
+            <div className="clock-time">{formatClock(activeHalf ? periodMs : inShootout ? 0 : match.phase === "finished" || match.phase === "abandoned" ? (hadExtraTime(match) ? match.extraSecondMs : match.secondHalfMs) : inBreak ? currentPeriodMs(match, now) : match.firstHalfMs)}</div>
+            {activeHalf && stoppageMs > 0 && <div className={`stoppage ${reachedStoppageTarget ? "target" : ""}`}>+ {formatClock(stoppageMs)} Nachspielzeit{match.announcedStoppageMin > 0 ? ` · Ansage +${match.announcedStoppageMin}` : ""}</div>}
+            {activeHalf && match.announcedStoppageMin > 0 && stoppageMs === 0 && <div className="stoppage">Ansage: +{match.announcedStoppageMin} min · Abpfiff ab {formatClock(stoppageTargetMs)}</div>}
+            {inShootout && <div className="clock-time shootout-score">{shoot.home} : {shoot.away}</div>}
+            <div className="clock-subtitle">{
+              match.phase === "firstHalf" ? `von ${match.halfDurationMinutes}:00 · 1. Halbzeit`
+              : match.phase === "secondHalf" ? `von ${match.halfDurationMinutes}:00 · 2. Halbzeit`
+              : match.phase === "extraFirst" ? `von ${match.extraDurationMinutes}:00 · 1. HZ Verlängerung`
+              : match.phase === "extraSecond" ? `von ${match.extraDurationMinutes}:00 · 2. HZ Verlängerung`
+              : inBreak ? "Uhr angehalten"
+              : inShootout ? `${shoot.homeTaken + shoot.awayTaken} Schüsse · ${shoot.nextTeam === "home" ? match.homeTeam : match.awayTeam} ist dran`
+              : match.phase === "finished" ? `Endstand${match.shootout.length ? ` · n.E. ${shoot.home}:${shoot.away}` : ""} · ${match.events.filter((event) => event.kind !== "period").length} Ereignisse`
+              : match.phase === "abandoned" ? "Spiel abgebrochen"
+              : `Bereit für 2 × ${match.halfDurationMinutes} Minuten`
+            }</div>
           </div>
+
+          {inBreak && match.breakStartedAt && (
+            <div className={`break-timer ${breakRemainingMs <= 0 ? "over" : ""}`}>
+              <Icon name="clock" /> {breakRemainingMs > 0 ? `Pause: ${formatClock(breakRemainingMs)} verbleibend` : "Pause vorbei – anpfeifen"}
+            </div>
+          )}
+
+          {penalties.length > 0 && (
+            <div className="pen-badges" aria-label="Laufende Zeitstrafen">
+              {penalties.map((penalty) => (
+                <span key={penalty.id} className={`pen-badge ${penalty.team}`}>
+                  <Icon name="stopwatch" /> {penalty.team === "home" ? match.homeTeam : match.awayTeam} · {penalty.label} · {formatClock(penalty.remainingMs)}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {inShootout && (
+            <div className="shootout-panel no-print">
+              <div className="shootout-rows">
+                {(["home", "away"] as const).map((side) => (
+                  <div key={side} className={`shootout-row ${shoot.nextTeam === side && !shoot.decided ? "is-next" : ""}`}>
+                    <strong>{side === "home" ? match.homeTeam : match.awayTeam}</strong>
+                    <span className="shootout-dots">
+                      {match.shootout.filter((attempt) => attempt.team === side).map((attempt) => (
+                        <span key={attempt.id} className={attempt.scored ? "hit" : "miss"}>{attempt.scored ? "●" : "○"}</span>
+                      ))}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              {!shoot.decided ? (
+                <div className="shootout-actions">
+                  <span>{shoot.nextTeam === "home" ? match.homeTeam : match.awayTeam}:</span>
+                  <button className="primary-control" onClick={() => recordShootout(true)}><Icon name="ball" /> Tor</button>
+                  <button className="secondary-control" onClick={() => recordShootout(false)}><Icon name="close" /> Kein Tor</button>
+                  {match.shootout.length > 0 && <button className="secondary-control" onClick={undoShootout}><Icon name="undo" /> Zurück</button>}
+                </div>
+              ) : (
+                <button className="finish-control" onClick={finishShootout}><Icon name="whistle" /> Spiel beenden · Sieg {shoot.winner === "home" ? match.homeTeam : match.awayTeam}</button>
+              )}
+            </div>
+          )}
+
           <div className="clock-controls no-print">
             {match.phase === "setup" && <button className="primary-control" onClick={startMatch}><Icon name="play" /> Spiel starten</button>}
             {activeHalf && <button className="secondary-control" onClick={toggleClock}><Icon name={match.runningSince === null ? "play" : "pause"} /> {match.runningSince === null ? "Uhr fortsetzen" : "Uhr anhalten"}</button>}
-            {match.phase === "firstHalf" && <button className="primary-control" disabled={halfMs < periodMs} onClick={finishFirstHalf}><Icon name="whistle" /> Halbzeit</button>}
+            {activeHalf && <button className="secondary-control" onClick={correctClock}><Icon name="edit" /> Uhr korrigieren</button>}
+            {activeHalf && <button className="secondary-control" onClick={announceStoppage}><Icon name="stopwatch" /> Nachspielzeit</button>}
+            {match.phase === "firstHalf" && <button className="primary-control" disabled={!periodUnlocked} onClick={finishFirstHalf}><Icon name="whistle" /> Halbzeit</button>}
             {match.phase === "halfTime" && <button className="primary-control" onClick={startSecondHalf}><Icon name="play" /> 2. Halbzeit starten</button>}
-            {match.phase === "secondHalf" && <button className="finish-control" disabled={halfMs < periodMs} onClick={finishMatch}><Icon name="whistle" /> Spielende</button>}
+            {match.phase === "secondHalf" && match.knockout && level && <button className="primary-control" disabled={!periodUnlocked} onClick={startExtraTime}><Icon name="play" /> Verlängerung</button>}
+            {match.phase === "secondHalf" && <button className="finish-control" disabled={!periodUnlocked} onClick={finishMatch}><Icon name="whistle" /> {match.knockout && level ? "Ohne Verl. beenden" : "Spielende"}</button>}
+            {match.phase === "extraFirst" && <button className="primary-control" disabled={!periodUnlocked} onClick={finishExtraFirst}><Icon name="whistle" /> Ende 1. HZ Verl.</button>}
+            {match.phase === "extraBreak" && <button className="primary-control" onClick={startExtraSecond}><Icon name="play" /> 2. HZ Verl. starten</button>}
+            {match.phase === "extraSecond" && <button className="finish-control" disabled={!periodUnlocked} onClick={finishExtraTime}><Icon name="whistle" /> {match.knockout && level ? "Elfmeterschießen" : "Spielende"}</button>}
+            {(activeHalf || inBreak) && <button className="danger-control" onClick={abandonMatch}><Icon name="alert" /> Spielabbruch</button>}
           </div>
-          {activeHalf && halfMs < periodMs && <p className="unlock-note no-print">{match.phase === "firstHalf" ? "Halbzeit" : "Spielende"} in {formatClock(periodMs - halfMs)} verfügbar</p>}
+          {activeHalf && !periodUnlocked && <p className="unlock-note no-print">{match.phase === "firstHalf" || match.phase === "extraFirst" ? "Halbzeitpfiff" : "Abpfiff"} in {formatClock(periodTargetMs - periodMs)} verfügbar</p>}
         </section>
 
         <section className="actions-section no-print" aria-labelledby="actions-title">
-          <div className="section-heading"><div><span className="eyebrow">Schnellerfassung</span><h2 id="actions-title">Was ist passiert?</h2></div><p>Die exakte Spielzeit wird automatisch übernommen.</p></div>
+          <div className="section-heading"><div><span className="eyebrow">Schnellerfassung</span><h2 id="actions-title">Was ist passiert?</h2></div><p>Zeitpunkt wird automatisch übernommen und ist im Dialog anpassbar.</p></div>
           <div className="team-action-grid">
-            <TeamActions side="home" team={match.homeTeam} disabled={!canRecord} onAction={(action) => setDialog({ action, team: "home" })}/>
-            <TeamActions side="away" team={match.awayTeam} disabled={!canRecord} onAction={(action) => setDialog({ action, team: "away" })}/>
+            {(["home", "away"] as const).map((side) => (
+              <TeamActions
+                key={side}
+                side={side}
+                team={side === "home" ? match.homeTeam : match.awayTeam}
+                subs={substitutionCount(match.events, side)}
+                sanctions={sanctions(match.events, side)}
+                disabled={!canRecord}
+                onAction={(action) => setDialog({ mode: "create", action, team: side })}
+              />
+            ))}
           </div>
         </section>
+
+        <CollapsibleSection
+          id="cards"
+          icon="shield"
+          title="Karten & Sanktionen"
+          hint="Übersicht je Spieler – die 2. Gelbe wird beim Erfassen automatisch als Feldverweis vorgeschlagen."
+          badge={sanctions(match.events, "home").length + sanctions(match.events, "away").length}
+          open={openPanel === "cards"}
+          onToggle={() => setOpenPanel((current) => (current === "cards" ? null : "cards"))}
+        >
+          <div className="sanction-grid">
+            {(["home", "away"] as const).map((side) => {
+              const rows = sanctions(match.events, side);
+              return (
+                <div key={side} className="sanction-col">
+                  <h4>{(side === "home" ? match.homeTeam : match.awayTeam) || (side === "home" ? "Heim" : "Gast")} · Wechsel {substitutionCount(match.events, side)}</h4>
+                  {rows.length === 0 ? <p className="collapsible-hint">Keine Karten oder Zeitstrafen.</p> : (
+                    <ul>
+                      {rows.map((row) => (
+                        <li key={row.player}>
+                          <span className="sanction-player">Nr. {row.player}{row.playerName ? ` ${row.playerName}` : ""}</span>
+                          <span className="sanction-marks">
+                            {row.yellow > 0 && <i className="mini-card yellow" title="Gelb" />}
+                            {row.yellowRed > 0 && <i className="mini-card yellowred" title="Gelb-Rot" />}
+                            {row.red > 0 && <i className="mini-card red" title="Rot" />}
+                            {row.timePenalties > 0 && <span className="sanction-tp">{row.timePenalties}× Zeitstrafe</span>}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </CollapsibleSection>
+
+        <CollapsibleSection
+          id="meta"
+          icon="info"
+          title="Spielinfos & Offizielle"
+          hint="Ort, Wettbewerb, Assistenten, Wetter – erscheint im Spielbericht."
+          open={openPanel === "meta"}
+          onToggle={() => setOpenPanel((current) => (current === "meta" ? null : "meta"))}
+        >
+          <MetaPanel meta={match.meta} onChange={(patch) => patchMatch({ meta: { ...match.meta, ...patch } })} />
+        </CollapsibleSection>
+
+        <CollapsibleSection
+          id="roster"
+          icon="user"
+          title="Mannschaftsaufstellungen"
+          hint="Nummern mit Namen hinterlegen – im Erfassungsdialog wird der Name automatisch ergänzt."
+          open={openPanel === "roster"}
+          onToggle={() => setOpenPanel((current) => (current === "roster" ? null : "roster"))}
+        >
+          <div className="roster-editor">
+            <div>
+              <RosterEditor teamLabel={match.homeTeam || "Heim"} roster={match.homeRoster} onChange={(next) => patchMatch({ homeRoster: next })} />
+              <button className="text-button" onClick={() => saveTeamToLibrary("home")}><Icon name="trophy" /> Heim in Bibliothek speichern</button>
+            </div>
+            <div>
+              <RosterEditor teamLabel={match.awayTeam || "Gast"} roster={match.awayRoster} onChange={(next) => patchMatch({ awayRoster: next })} />
+              <button className="text-button" onClick={() => saveTeamToLibrary("away")}><Icon name="trophy" /> Gast in Bibliothek speichern</button>
+            </div>
+          </div>
+        </CollapsibleSection>
+
+        <CollapsibleSection
+          id="teams"
+          icon="user"
+          title="Team-Bibliothek"
+          hint="Vereine samt Kader einmal speichern und geräteübergreifend wiederverwenden."
+          badge={teams.length}
+          open={openPanel === "teams"}
+          onToggle={() => setOpenPanel((current) => (current === "teams" ? null : "teams"))}
+        >
+          <TeamLibraryPanel
+            teams={teams}
+            onUpdate={(id, patch) => setTeams((list) => list.map((team) => (team.id === id ? { ...team, ...patch, updatedAt: nowIso() } : team)))}
+            onDelete={(id) => { if (window.confirm("Team aus der Bibliothek löschen?")) setTeams((list) => list.filter((team) => team.id !== id)); }}
+            onApply={applyTeamFromLibrary}
+            onAdd={() => setTeams((list) => mergeTeams([createSavedTeam("Neues Team")], list))}
+          />
+        </CollapsibleSection>
 
         <section className="log-card" aria-labelledby="log-title">
           <div className="section-heading">
-            <div><span className="eyebrow">Digitale Spielnotiz</span><h2 id="log-title"><Icon name="list" /> Spielereignisse <span className="count">{match.events.length}</span></h2></div>
-            <div className="log-tools no-print"><button className="icon-button" onClick={exportCsv} disabled={!match.events.length}><Icon name="download"/> CSV</button><button className="icon-button" onClick={() => window.print()} disabled={!match.events.length}><Icon name="print"/> Drucken</button></div>
+            <button className="log-toggle no-print" aria-expanded={showLog} onClick={() => setShowLog((value) => !value)}>
+              <span className="eyebrow">Digitale Spielnotiz</span>
+              <h2 id="log-title"><Icon name="list" /> Spielereignisse <span className="count">{match.events.length}</span></h2>
+              <span className={`chevron ${showLog ? "up" : ""}`}><Icon name="play" /></span>
+            </button>
+            <div className="log-tools no-print">
+              <button className="icon-button" onClick={() => setDialog({ mode: "create", action: "note" })}><Icon name="alert" /> Vorkommnis</button>
+              <button className="icon-button" onClick={saveCurrentMatch} disabled={!match.events.length}><Icon name="check" /> {isArchived ? "Aktualisieren" : "Speichern"}</button>
+              <button className="icon-button" onClick={() => void shareReport()} disabled={!match.events.length}><Icon name="share" /> Teilen</button>
+              <button className="icon-button" onClick={exportCsv} disabled={!match.events.length}><Icon name="download" /> CSV</button>
+              <button className="icon-button" onClick={() => setPrintTarget(match)} disabled={!match.events.length}><Icon name="print" /> Drucken</button>
+            </div>
           </div>
-          <div className="print-summary"><strong>{match.homeTeam} {homeScore} : {awayScore} {match.awayTeam}</strong><span>{ageGroups.find((group) => group.value === match.ageGroup)?.label} · 2 × {match.halfDurationMinutes} Minuten</span></div>
-          {match.events.length === 0 ? <div className="empty-log"><Icon name="whistle"/><strong>Noch keine Spielereignisse</strong><span>Sobald das Spiel startet, erscheint hier der erste Eintrag.</span></div> :
-            <ol className="event-list">{[...match.events].reverse().map((event) => <li key={event.id} className={`event event-${event.kind}`}>
-              <div className="event-time"><strong>{event.minute}&prime;</strong><span>{event.exactTime}</span></div>
-              <span className="event-icon">{event.kind === "goal" ? <Icon name="ball"/> : event.kind === "substitution" ? <Icon name="swap"/> : event.kind === "period" ? <Icon name="whistle"/> : <span className={`mini-card ${event.kind}`}/>}</span>
-              <div className="event-copy"><strong>{event.label}</strong><span>{event.team === "home" ? "Heimmannschaft" : event.team === "away" ? "Gastmannschaft" : "Spielabschnitt"}</span></div>
-              {event.kind !== "period" && <button className="delete-event no-print" aria-label={`${event.label} löschen`} title="Eintrag löschen" onClick={() => deleteEvent(event.id)}><Icon name="trash"/></button>}
-            </li>)}</ol>}
+
+          {!showLog ? null : match.events.length === 0 ? <div className="empty-log"><Icon name="whistle" /><strong>Noch keine Spielereignisse</strong><span>Sobald das Spiel startet, erscheint hier der erste Eintrag.</span></div> :
+            <div className="table-scroll">
+              <table className="event-table">
+                <thead>
+                  <tr>
+                    <th>Datum</th><th>Uhrzeit</th><th>Spielzeit</th><th>Min.</th><th>Ereignis</th><th>Mannschaft</th><th className="no-print" aria-label="Aktionen" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {orderedEvents.map((event) => (
+                    <tr key={event.id} className={`row-${event.kind}`}>
+                      <td>{formatDate(event.createdAt)}</td>
+                      <td className="num">{formatWallClock(event.createdAt)}</td>
+                      <td className="num">{event.exactTime}</td>
+                      <td className="num">{event.minute}&prime;</td>
+                      <td>{event.label}{event.editedAt ? <span className="edited-tag"> · bearb.</span> : null}</td>
+                      <td>{event.team === "home" ? match.homeTeam : event.team === "away" ? match.awayTeam : "Spielabschnitt"}</td>
+                      <td className="no-print event-actions">
+                        {event.kind !== "period" && <>
+                          <button className="mini-icon" aria-label={`${event.label} bearbeiten`} title="Bearbeiten" onClick={() => editEvent(event)}><Icon name="edit" /></button>
+                          <button className="mini-icon danger" aria-label={`${event.label} löschen`} title="Löschen" onClick={() => deleteEvent(event.id)}><Icon name="trash" /></button>
+                        </>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>}
+
+          {printTarget && !printTournament && <MatchReport state={printTarget} />}
+          {printTournament && <TournamentReport tournament={printTournament} archive={archive} />}
         </section>
-        <p className="privacy-note no-print">Alle Daten bleiben lokal in diesem Browser. Bitte exportiere den Bericht, bevor du Browserdaten löschst oder das Gerät wechselst.</p>
+
+        <section className="log-card archive-card no-print" aria-labelledby="archive-title">
+          <div className="section-heading">
+            <div><span className="eyebrow">Archiv &amp; Sync</span><h2 id="archive-title"><Icon name="list" /> Gespeicherte Spiele <span className="count">{archive.length}</span></h2></div>
+            <div className="log-tools">
+              <button className="icon-button" onClick={syncNow}><Icon name="refresh" /> Jetzt synchronisieren</button>
+              <button className="icon-button" onClick={exportAll} disabled={!archive.length && !match.events.length && !tournaments.length}><Icon name="download" /> Exportieren</button>
+              <button className="icon-button" onClick={() => fileInput.current?.click()}><Icon name="upload" /> Importieren</button>
+              <input ref={fileInput} type="file" accept="application/json,.json" hidden onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) void importAll(file);
+                event.target.value = "";
+              }} />
+            </div>
+          </div>
+          <p className="archive-hint">{syncStatusLabel[syncState]} · {syncAgoText}. Gespeicherte Spiele und Turniere erscheinen auf jedem angemeldeten Gerät; Export/Import dient als Backup und zur Weitergabe.</p>
+          {archive.length === 0 ? <div className="empty-log"><Icon name="list" /><strong>Noch keine gespeicherten Spiele</strong><span>Tippe im Protokoll auf „Speichern“, um ein Spiel hier abzulegen.</span></div> :
+            <div className="table-scroll">
+              <table className="archive-table">
+                <thead>
+                  <tr><th>Spieldatum</th><th>Gespeichert</th><th>Begegnung</th><th>Ergebnis</th><th>Jugend</th><th>Ereignisse</th><th aria-label="Aktionen" /></tr>
+                </thead>
+                <tbody>
+                  {archive.map((entry) => {
+                    const saved = entry.state;
+                    const isOpen = saved.id === match.id;
+                    return (
+                      <tr key={saved.id} className={isOpen ? "row-open" : undefined}>
+                        <td>{matchDateLabel(saved)}</td>
+                        <td className="num">{formatDate(entry.savedAt)} · {formatWallClock(entry.savedAt)}</td>
+                        <td>{saved.homeTeam} – {saved.awayTeam}{saved.phase === "abandoned" ? " (Abbr.)" : ""}</td>
+                        <td className="num">{score(saved.events, "home")} : {score(saved.events, "away")}</td>
+                        <td>{ageGroups.find((group) => group.value === saved.ageGroup)?.label ?? "–"}</td>
+                        <td className="num">{saved.events.filter((event) => event.kind !== "period").length}</td>
+                        <td className="archive-actions">
+                          <button className="text-button" onClick={() => openSavedMatch(saved.id)} disabled={isOpen}>{isOpen ? "Geöffnet" : "Öffnen"}</button>
+                          <button className="text-button" onClick={() => setPrintTarget(saved)} title="Als PDF drucken"><Icon name="print" /></button>
+                          <button className="text-button danger-text" onClick={() => deleteSavedMatch(saved.id)} aria-label="Gespeichertes Spiel löschen"><Icon name="trash" /></button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>}
+        </section>
+
+        <CollapsibleSection
+          id="tournaments"
+          icon="trophy"
+          title="Turniere"
+          hint="Spielplan, Ergebnisse und automatische Tabelle – als ganzes PDF druckbar."
+          badge={tournaments.length}
+          open={openPanel === "tournaments"}
+          onToggle={() => setOpenPanel((current) => (current === "tournaments" ? null : "tournaments"))}
+        >
+          <TournamentPanel
+            tournaments={tournaments}
+            archive={archive}
+            onCreate={() => {
+              const name = window.prompt("Name des Turniers:", "");
+              if (name === null) return;
+              setTournaments((list) => [createTournament(name.trim(), todayIso()), ...list]);
+            }}
+            onUpdate={(id, patch) => setTournaments((list) => list.map((tournament) => tournament.id === id ? { ...tournament, ...patch, updatedAt: nowIso() } : tournament))}
+            onDelete={(id) => {
+              if (!window.confirm("Turnier löschen? Gespeicherte Spiele bleiben im Archiv erhalten.")) return;
+              setTournaments((list) => list.filter((tournament) => tournament.id !== id));
+            }}
+            onStartFixture={startFixture}
+            onExportOne={(tournament) => downloadJson(`turnier-${(tournament.name || "squora").replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.json`, { app: "squora-schiedsrichter-note", kind: "tournament", version: 2, tournament })}
+            onPrint={setPrintTournament}
+          />
+        </CollapsibleSection>
+
+        <CollapsibleSection
+          id="stats"
+          icon="chart"
+          title="Saison-Statistik"
+          hint="Auswertung aus dem Archiv für einen Zeitraum – als CSV exportierbar."
+          open={openPanel === "stats"}
+          onToggle={() => setOpenPanel((current) => (current === "stats" ? null : "stats"))}
+        >
+          <StatsPanel
+            archive={archive}
+            range={statsRange}
+            onRange={(patch) => setStatsRange((current) => ({ ...current, ...patch }))}
+            onExport={() => {
+              const rows = statsCsvRows(archive, statsRange.from, statsRange.to);
+              const csv = rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(";")).join("\r\n");
+              downloadBlob(`squora-statistik-${statsRange.from}_${statsRange.to}.csv`, new Blob(["﻿", csv], { type: "text/csv;charset=utf-8" }));
+            }}
+          />
+        </CollapsibleSection>
+
+        <p className="privacy-note no-print">Das laufende Spiel liegt lokal in diesem Browser. Gespeicherte Spiele, Turniere und die Team-Bibliothek werden zusätzlich verschlüsselt über deinen Login bei Cloudflare abgeglichen, damit sie auf allen angemeldeten Geräten verfügbar sind.</p>
       </main>
 
-      {dialog && <EventDialog dialog={dialog} team={dialog.team === "home" ? match.homeTeam : match.awayTeam} currentTime={formatClock(matchTimeMs(match, Date.now()))} onClose={() => setDialog(null)} onSave={saveEvent}/>}
-      {notice && <div className="toast" role="status"><Icon name="check"/>{notice}</div>}
+      {dialog && (
+        <EventDialog
+          request={dialog}
+          teamLabel={dialog.team ? teamName(match, dialog.team) : "Spiel"}
+          roster={dialog.team === "home" ? match.homeRoster : dialog.team === "away" ? match.awayRoster : []}
+          defaultTimeText={formatClock(liveMatchMs)}
+          hasPriorYellow={dialog.team ? (player) => hasPriorYellow(match.events, dialog.team as TeamSide, player) : undefined}
+          onClose={() => setDialog(null)}
+          onSave={handleDialogSave}
+        />
+      )}
+      {notice && (
+        <div className="toast" role="status">
+          <Icon name="check" />{notice.text}
+          {notice.undo && <button className="toast-undo" onClick={() => { setMatch(notice.undo!); setNotice(null); }}><Icon name="undo" /> Rückgängig</button>}
+        </div>
+      )}
+      {sessionExpired && <SessionExpiredModal baseUrl={import.meta.env.BASE_URL} />}
+    </div>
+  );
+
+  function exportCsv() {
+    const rows = [
+      ["Datum", "Uhrzeit", "Spielzeit", "Minute", "Ereignis", "Mannschaft", "Spieler", "Raus", "Rein", "Dauer (min)"],
+      ...[...match.events].sort((a, b) => a.matchMs - b.matchMs).map((event) => [
+        formatDate(event.createdAt), formatWallClock(event.createdAt), event.exactTime, String(event.minute), event.label,
+        event.team === "home" ? match.homeTeam : event.team === "away" ? match.awayTeam : "",
+        event.playerName ? `${event.player} ${event.playerName}` : event.player ?? "",
+        event.playerOutName ? `${event.playerOut} ${event.playerOutName}` : event.playerOut ?? "",
+        event.playerInName ? `${event.playerIn} ${event.playerInName}` : event.playerIn ?? "",
+        event.durationMin ? String(event.durationMin) : "",
+      ]),
+    ];
+    const csv = rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(";")).join("\r\n");
+    downloadBlob(`spielbericht-${match.homeTeam}-${match.awayTeam}.csv`.replace(/[^a-z0-9äöüß.-]+/gi, "-").toLowerCase(),
+      new Blob(["﻿", csv], { type: "text/csv;charset=utf-8" }));
+  }
+}
+
+function downloadBlob(filename: string, blob: Blob) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function downloadJson(filename: string, data: unknown) {
+  downloadBlob(filename, new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+}
+
+function TeamActions({ side, team, subs, sanctions: sanctionRows, disabled, onAction }: {
+  side: TeamSide;
+  team: string;
+  subs: number;
+  sanctions: ReturnType<typeof sanctions>;
+  disabled: boolean;
+  onAction: (action: ActionKind) => void;
+}) {
+  const buttons: { action: ActionKind; className: string; icon: React.ReactNode }[] = [
+    { action: "goal", className: "action-goal", icon: <Icon name="ball" /> },
+    { action: "penaltyGoal", className: "action-pen", icon: <Icon name="penalty" /> },
+    { action: "ownGoal", className: "action-own", icon: <Icon name="ball" /> },
+    { action: "substitution", className: "action-sub", icon: <Icon name="swap" /> },
+    { action: "yellow", className: "action-yellow", icon: <span className="large-card yellow" /> },
+    { action: "yellowRed", className: "action-yellowred", icon: <span className="large-card yellowred" /> },
+    { action: "red", className: "action-red", icon: <span className="large-card red" /> },
+    { action: "timePenalty", className: "action-time", icon: <Icon name="stopwatch" /> },
+  ];
+  const cardCarriers = sanctionRows.filter((row) => row.yellow || row.yellowRed || row.red);
+  return (
+    <div className={`team-actions ${side}`}>
+      <div className="team-actions-title"><span>{side === "home" ? "Heim" : "Gast"}</span><strong>{team || (side === "home" ? "Heimmannschaft" : "Gastmannschaft")}</strong></div>
+      <div className="action-buttons">
+        {buttons.map((button) => (
+          <button key={button.action} className={button.className} disabled={disabled} aria-label={`${eventMeta[button.action].short} ${side === "home" ? "Heim" : "Gast"}`} onClick={() => onAction(button.action)}>
+            <span className="action-icon">{button.icon}</span>
+            <span><strong>{eventMeta[button.action].short}</strong></span>
+          </button>
+        ))}
+      </div>
+      <div className="team-tally">
+        <span><Icon name="swap" /> Wechsel: <strong>{subs}</strong></span>
+        {cardCarriers.length > 0 && (
+          <span className="team-tally-cards">
+            {cardCarriers.map((row) => (
+              <span key={row.player} className="tally-card">
+                Nr. {row.player}
+                {row.yellow > 0 && <i className="mini-card yellow" />}
+                {row.yellowRed > 0 && <i className="mini-card yellowred" />}
+                {row.red > 0 && <i className="mini-card red" />}
+              </span>
+            ))}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
 
-function TeamActions({ side, team, disabled, onAction }: { side: TeamSide; team: string; disabled: boolean; onAction: (action: DialogAction) => void }) {
-  return <div className={`team-actions ${side}`}>
-    <div className="team-actions-title"><span>{side === "home" ? "Heim" : "Gast"}</span><strong>{team || (side === "home" ? "Heimmannschaft" : "Gastmannschaft")}</strong></div>
-    <div className="action-buttons">
-      <button className="action-goal" disabled={disabled} onClick={() => onAction("goal")}><span className="action-icon"><Icon name="ball"/></span><span><strong>Tor</strong><small>Rückennummer</small></span></button>
-      <button className="action-sub" disabled={disabled} onClick={() => onAction("substitution")}><span className="action-icon"><Icon name="swap"/></span><span><strong>Wechsel</strong><small>Raus & rein</small></span></button>
-      <button className="action-yellow" disabled={disabled} onClick={() => onAction("yellow")}><span className="action-icon"><span className="large-card yellow"/></span><span><strong>Gelb</strong><small>Rückennummer</small></span></button>
-      <button className="action-red" disabled={disabled} onClick={() => onAction("red")}><span className="action-icon"><span className="large-card red"/></span><span><strong>Rot</strong><small>Rückennummer</small></span></button>
-    </div>
-  </div>;
+function CollapsibleSection({ id, icon, title, hint, badge, open, onToggle, children }: {
+  id: string; icon: Parameters<typeof Icon>[0]["name"]; title: string; hint: string; badge?: number; open: boolean; onToggle: () => void; children: React.ReactNode;
+}) {
+  return (
+    <section className={`log-card collapsible no-print ${open ? "is-open" : ""}`} aria-labelledby={`${id}-title`}>
+      <button className="collapsible-head" aria-expanded={open} onClick={onToggle}>
+        <span className="collapsible-title"><Icon name={icon} /><span id={`${id}-title`}>{title}</span>{badge ? <span className="count">{badge}</span> : null}</span>
+        <span className={`chevron ${open ? "up" : ""}`}><Icon name="play" /></span>
+      </button>
+      {open && <div className="collapsible-body"><p className="collapsible-hint">{hint}</p>{children}</div>}
+    </section>
+  );
 }
 
-function EventDialog({ dialog, team, currentTime, onClose, onSave }: { dialog: NonNullable<DialogState>; team: string; currentTime: string; onClose: () => void; onSave: (data: { player?: string; playerIn?: string; playerOut?: string }) => void }) {
-  const [player, setPlayer] = useState("");
-  const [playerOut, setPlayerOut] = useState("");
-  const [playerIn, setPlayerIn] = useState("");
-  const firstInput = useRef<HTMLInputElement>(null);
-  useEffect(() => firstInput.current?.focus(), []);
-  const titles = { goal: "Tor eintragen", substitution: "Wechsel eintragen", yellow: "Gelbe Karte", red: "Rote Karte" };
-  const valid = dialog.action === "substitution" ? Boolean(playerOut.trim() && playerIn.trim()) : Boolean(player.trim());
-  const submit = (event: React.FormEvent) => { event.preventDefault(); if (valid) onSave(dialog.action === "substitution" ? { playerOut: playerOut.trim(), playerIn: playerIn.trim() } : { player: player.trim() }); };
-  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-    <div className="modal" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
-      <button className="modal-close" onClick={onClose} aria-label="Dialog schließen"><Icon name="close"/></button>
-      <span className={`modal-symbol ${dialog.action}`}>
-        {dialog.action === "goal" ? <Icon name="ball"/> : dialog.action === "substitution" ? <Icon name="swap"/> : <span className={`large-card ${dialog.action}`}/>}</span>
-      <div className="dialog-kicker">{team} · {currentTime}</div><h2 id="dialog-title">{titles[dialog.action]}</h2>
-      <form onSubmit={submit}>
-        {dialog.action === "substitution" ? <div className="sub-fields">
-          <label><span>Rückennummer raus</span><input ref={firstInput} inputMode="numeric" pattern="[0-9A-Za-z-]+" maxLength={4} value={playerOut} onChange={(e) => setPlayerOut(e.target.value)} placeholder="z. B. 8"/><small><i className="out-arrow">↓</i> verlässt das Feld</small></label>
-          <label><span>Rückennummer rein</span><input inputMode="numeric" pattern="[0-9A-Za-z-]+" maxLength={4} value={playerIn} onChange={(e) => setPlayerIn(e.target.value)} placeholder="z. B. 14"/><small><i className="in-arrow">↑</i> betritt das Feld</small></label>
-        </div> : <label className="player-field"><span>Rückennummer</span><input ref={firstInput} inputMode="numeric" pattern="[0-9A-Za-z-]+" maxLength={4} value={player} onChange={(e) => setPlayer(e.target.value)} placeholder="z. B. 10"/><small>Die Spielzeit {currentTime} wird automatisch gespeichert.</small></label>}
-        <div className="modal-actions"><button type="button" className="cancel-button" onClick={onClose}>Abbrechen</button><button className="save-button" disabled={!valid}><Icon name="check"/> Ereignis speichern</button></div>
-      </form>
+const META_FIELDS: { key: keyof MatchMeta; label: string; wide?: boolean; area?: boolean }[] = [
+  { key: "referee", label: "Schiedsrichter/in" },
+  { key: "assistant1", label: "Assistent/in 1" },
+  { key: "assistant2", label: "Assistent/in 2" },
+  { key: "fourthOfficial", label: "4. Offizielle/r" },
+  { key: "competition", label: "Wettbewerb" },
+  { key: "matchday", label: "Spieltag / Runde" },
+  { key: "venue", label: "Spielort / Platz", wide: true },
+  { key: "spectators", label: "Zuschauer" },
+  { key: "kickoffDelay", label: "Anstoßverzögerung" },
+  { key: "weather", label: "Wetter" },
+  { key: "pitch", label: "Platzverhältnisse" },
+  { key: "incidents", label: "Besondere Vorkommnisse", wide: true, area: true },
+];
+
+function MetaPanel({ meta, onChange }: { meta: MatchMeta; onChange: (patch: Partial<MatchMeta>) => void }) {
+  return (
+    <div className="meta-grid">
+      {META_FIELDS.map((field) => (
+        <label key={field.key} className={field.wide ? "wide" : ""}>
+          <span>{field.label}</span>
+          {field.area
+            ? <textarea rows={3} maxLength={600} value={meta[field.key]} onChange={(event) => onChange({ [field.key]: event.target.value })} />
+            : <input value={meta[field.key]} maxLength={120} onChange={(event) => onChange({ [field.key]: event.target.value })} />}
+        </label>
+      ))}
     </div>
-  </div>;
+  );
+}
+
+function RosterEditor({ teamLabel, roster, onChange }: { teamLabel: string; roster: Player[]; onChange: (next: Player[]) => void }) {
+  const update = (id: string, patch: Partial<Player>) => onChange(roster.map((player) => (player.id === id ? { ...player, ...patch } : player)));
+  return (
+    <div className="roster-col">
+      <h4>{teamLabel}</h4>
+      {roster.map((player) => (
+        <div key={player.id} className="roster-row">
+          <input className="roster-num" inputMode="numeric" maxLength={4} placeholder="Nr." value={player.number} onChange={(event) => update(player.id, { number: event.target.value })} />
+          <input className="roster-name" maxLength={60} placeholder="Name" value={player.name} onChange={(event) => update(player.id, { name: event.target.value })} />
+          <button className="mini-icon danger" aria-label="Spieler entfernen" onClick={() => onChange(roster.filter((entry) => entry.id !== player.id))}><Icon name="trash" /></button>
+        </div>
+      ))}
+      <button className="text-button" onClick={() => onChange([...roster, { id: uid(), number: "", name: "" }])}><Icon name="plus" /> Spieler hinzufügen</button>
+    </div>
+  );
+}
+
+function TournamentPanel({ tournaments, archive, onCreate, onUpdate, onDelete, onStartFixture, onExportOne, onPrint }: {
+  tournaments: Tournament[];
+  archive: SavedMatch[];
+  onCreate: () => void;
+  onUpdate: (id: string, patch: Partial<Tournament>) => void;
+  onDelete: (id: string) => void;
+  onStartFixture: (tournament: Tournament, fixture: Fixture) => void;
+  onExportOne: (tournament: Tournament) => void;
+  onPrint: (tournament: Tournament) => void;
+}) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
+  const expanded = tournaments.find((tournament) => tournament.id === expandedId) ?? null;
+  const activeTournaments = tournaments.filter((tournament) => !tournament.archived);
+  const archivedTournaments = tournaments.filter((tournament) => tournament.archived);
+
+  const renderCard = (tournament: Tournament) => (
+        <div key={tournament.id} className={`tournament-card ${expanded?.id === tournament.id ? "is-open" : ""}`}>
+          <button className="tournament-head" onClick={() => setExpandedId((current) => (current === tournament.id ? null : tournament.id))}>
+            <strong>{tournament.name || "Unbenanntes Turnier"}</strong>
+            <span>{formatDate(`${tournament.date}T00:00:00`)} · {tournament.fixtures.length} Spiele</span>
+          </button>
+
+          {expanded?.id === tournament.id && (
+            <div className="tournament-body">
+              <div className="meta-grid">
+                <label><span>Name</span><input value={tournament.name} onChange={(event) => onUpdate(tournament.id, { name: event.target.value })} /></label>
+                <label><span>Datum</span><input type="date" value={tournament.date} onChange={(event) => onUpdate(tournament.id, { date: event.target.value })} /></label>
+                <label><span>Jugend</span><select value={tournament.ageGroup} onChange={(event) => {
+                  const selected = ageGroups.find((group) => group.value === event.target.value)!;
+                  onUpdate(tournament.id, { ageGroup: selected.value, halfDurationMinutes: selected.minutes });
+                }}>{ageGroups.map((group) => <option key={group.value} value={group.value}>{group.label}</option>)}</select></label>
+                <label><span>Minuten je Halbzeit</span><input type="number" min={1} max={60} value={tournament.halfDurationMinutes} onChange={(event) => onUpdate(tournament.id, { halfDurationMinutes: Number(event.target.value) || 1 })} /></label>
+                <label className="wide"><span>Gruppen (mit Komma trennen)</span><input value={tournament.groups.join(", ")} onChange={(event) => {
+                  const groups = event.target.value.split(",").map((group) => group.trim()).filter(Boolean);
+                  onUpdate(tournament.id, { groups: groups.length ? [...new Set(groups)] : ["A"] });
+                }} /></label>
+              </div>
+
+              {tournament.groups.map((group) => {
+                const fixtures = tournament.fixtures.filter((fixture) => fixture.group === group);
+                const table = standings(tournament, archive, group);
+                return (
+                  <div key={group} className="tournament-group">
+                    <h4>Gruppe {group}</h4>
+                    <div className="table-scroll">
+                      <table className="fixture-table">
+                        <thead><tr><th>Heim</th><th>Gast</th><th>Anstoß</th><th>Ergebnis</th><th aria-label="Aktionen" /></tr></thead>
+                        <tbody>
+                          {fixtures.length === 0 && <tr><td colSpan={5}>Noch keine Ansetzung.</td></tr>}
+                          {fixtures.map((fixture) => {
+                            const linked = fixture.matchId ? archive.find((entry) => entry.state.id === fixture.matchId)?.state ?? null : null;
+                            const result = linked && linked.phase === "finished" ? `${score(linked.events, "home")} : ${score(linked.events, "away")}` : linked ? "läuft" : "–";
+                            const setFixture = (patch: Partial<Fixture>) => onUpdate(tournament.id, {
+                              fixtures: tournament.fixtures.map((entry) => (entry.id === fixture.id ? { ...entry, ...patch } : entry)),
+                            });
+                            return (
+                              <tr key={fixture.id}>
+                                <td><input value={fixture.home} placeholder="Heim" onChange={(event) => setFixture({ home: event.target.value })} /></td>
+                                <td><input value={fixture.away} placeholder="Gast" onChange={(event) => setFixture({ away: event.target.value })} /></td>
+                                <td><input className="kickoff" value={fixture.kickoff} placeholder="10:00" onChange={(event) => setFixture({ kickoff: event.target.value })} /></td>
+                                <td className="num">{result}</td>
+                                <td className="fixture-actions">
+                                  <button className="text-button" onClick={() => onStartFixture(tournament, fixture)}>{linked ? "Neu anpfeifen" : "Anpfiff"}</button>
+                                  <button className="text-button danger-text" aria-label="Ansetzung entfernen" onClick={() => onUpdate(tournament.id, { fixtures: tournament.fixtures.filter((entry) => entry.id !== fixture.id) })}><Icon name="trash" /></button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                    <button className="text-button" onClick={() => onUpdate(tournament.id, { fixtures: [...tournament.fixtures, createFixture(group)] })}><Icon name="plus" /> Spiel hinzufügen</button>
+
+                    {table.length > 0 && (
+                      <div className="table-scroll">
+                        <table className="standings-table">
+                          <thead><tr><th>#</th><th>Mannschaft</th><th>Sp</th><th>S</th><th>U</th><th>N</th><th>Tore</th><th>Diff</th><th>Pkt</th></tr></thead>
+                          <tbody>
+                            {table.map((row, index) => (
+                              <tr key={row.team}>
+                                <td className="num">{index + 1}</td>
+                                <td>{row.team}</td>
+                                <td className="num">{row.played}</td>
+                                <td className="num">{row.won}</td>
+                                <td className="num">{row.drawn}</td>
+                                <td className="num">{row.lost}</td>
+                                <td className="num">{row.goalsFor}:{row.goalsAgainst}</td>
+                                <td className="num">{row.goalDiff > 0 ? `+${row.goalDiff}` : row.goalDiff}</td>
+                                <td className="num"><strong>{row.points}</strong></td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              <div className="tournament-tools">
+                <button className="icon-button" onClick={() => onPrint(tournament)}><Icon name="print" /> Turnier als PDF</button>
+                <button className="icon-button" onClick={() => onExportOne(tournament)}><Icon name="download" /> Turnier exportieren</button>
+                <button className="icon-button" onClick={() => onUpdate(tournament.id, { archived: !tournament.archived })}><Icon name={tournament.archived ? "refresh" : "check"} /> {tournament.archived ? "Wiederherstellen" : "Archivieren"}</button>
+                <button className="icon-button danger" onClick={() => onDelete(tournament.id)}><Icon name="trash" /> Turnier löschen</button>
+              </div>
+            </div>
+          )}
+        </div>
+  );
+
+  return (
+    <div className="tournament-panel">
+      <button className="icon-button" onClick={onCreate}><Icon name="plus" /> Neues Turnier</button>
+      {activeTournaments.length === 0 && archivedTournaments.length === 0 && <p className="collapsible-hint">Noch kein Turnier angelegt.</p>}
+
+      {activeTournaments.map(renderCard)}
+
+      {archivedTournaments.length > 0 && (
+        <div className="archived-tournaments">
+          <button className="text-button" onClick={() => setShowArchived((value) => !value)}>
+            <Icon name="list" /> Archivierte Turniere ({archivedTournaments.length}) · {showArchived ? "ausblenden" : "anzeigen"}
+          </button>
+          {showArchived && archivedTournaments.map(renderCard)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TournamentReport({ tournament, archive }: { tournament: Tournament; archive: SavedMatch[] }) {
+  return (
+    <div className="match-report tournament-report">
+      <div className="report-brand">SQUORA · Schiedsrichter Note</div>
+      <h3>Turnierbericht – {tournament.name || "Unbenanntes Turnier"}</h3>
+      <div className="report-meta">
+        <span><b>Datum:</b> {formatDate(`${tournament.date}T00:00:00`)}</span>
+        <span><b>Altersklasse:</b> {ageGroups.find((group) => group.value === tournament.ageGroup)?.label ?? tournament.ageGroup} · 2 × {tournament.halfDurationMinutes} Min.</span>
+      </div>
+      {tournament.groups.map((group) => {
+        const fixtures = tournament.fixtures.filter((fixture) => fixture.group === group);
+        const table = standings(tournament, archive, group);
+        return (
+          <div key={group} className="report-group">
+            <h4>Gruppe {group}</h4>
+            <table className="report-table">
+              <thead><tr><th>#</th><th>Mannschaft</th><th>Sp</th><th>S</th><th>U</th><th>N</th><th>Tore</th><th>Diff</th><th>Pkt</th></tr></thead>
+              <tbody>
+                {table.map((row, index) => (
+                  <tr key={row.team}>
+                    <td className="num">{index + 1}</td><td>{row.team}</td><td className="num">{row.played}</td>
+                    <td className="num">{row.won}</td><td className="num">{row.drawn}</td><td className="num">{row.lost}</td>
+                    <td className="num">{row.goalsFor}:{row.goalsAgainst}</td>
+                    <td className="num">{row.goalDiff > 0 ? `+${row.goalDiff}` : row.goalDiff}</td>
+                    <td className="num">{row.points}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <table className="report-table">
+              <thead><tr><th>Anstoß</th><th>Begegnung</th><th>Ergebnis</th></tr></thead>
+              <tbody>
+                {fixtures.map((fixture) => {
+                  const linked = fixture.matchId ? archive.find((entry) => entry.state.id === fixture.matchId)?.state ?? null : null;
+                  const result = linked && linked.phase === "finished" ? `${score(linked.events, "home")} : ${score(linked.events, "away")}` : "–";
+                  return <tr key={fixture.id}><td className="num">{fixture.kickoff || "–"}</td><td>{fixture.home || "?"} – {fixture.away || "?"}</td><td className="num">{result}</td></tr>;
+                })}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function TeamLibraryPanel({ teams, onUpdate, onDelete, onApply, onAdd }: {
+  teams: SavedTeam[];
+  onUpdate: (id: string, patch: Partial<SavedTeam>) => void;
+  onDelete: (id: string) => void;
+  onApply: (side: TeamSide, id: string) => void;
+  onAdd: () => void;
+}) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  return (
+    <div className="tournament-panel">
+      <button className="icon-button" onClick={onAdd}><Icon name="plus" /> Team anlegen</button>
+      {teams.length === 0 && <p className="collapsible-hint">Noch keine Teams gespeichert. Lege hier eins an oder speichere ein Team aus „Mannschaftsaufstellungen".</p>}
+      {teams.map((team) => (
+        <div key={team.id} className={`tournament-card ${expandedId === team.id ? "is-open" : ""}`}>
+          <button className="tournament-head" onClick={() => setExpandedId((current) => (current === team.id ? null : team.id))}>
+            <strong>{team.name || "Unbenanntes Team"}</strong>
+            <span>{team.club ? `${team.club} · ` : ""}{team.roster.length} Spieler</span>
+          </button>
+          {expandedId === team.id && (
+            <div className="tournament-body">
+              <div className="meta-grid">
+                <label><span>Name</span><input value={team.name} onChange={(event) => onUpdate(team.id, { name: event.target.value })} /></label>
+                <label><span>Verein / Zusatz</span><input value={team.club} onChange={(event) => onUpdate(team.id, { club: event.target.value })} /></label>
+              </div>
+              <RosterEditor teamLabel="Kader" roster={team.roster} onChange={(next) => onUpdate(team.id, { roster: next })} />
+              <div className="tournament-tools">
+                <button className="icon-button" onClick={() => onApply("home", team.id)}><Icon name="check" /> Als Heim übernehmen</button>
+                <button className="icon-button" onClick={() => onApply("away", team.id)}><Icon name="check" /> Als Gast übernehmen</button>
+                <button className="icon-button danger" onClick={() => onDelete(team.id)}><Icon name="trash" /> Löschen</button>
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function StatsPanel({ archive, range, onRange, onExport }: {
+  archive: SavedMatch[];
+  range: { from: string; to: string };
+  onRange: (patch: Partial<{ from: string; to: string }>) => void;
+  onExport: () => void;
+}) {
+  const stats = useMemo(() => seasonStats(archive, range.from, range.to), [archive, range.from, range.to]);
+  const tiles: { label: string; value: number }[] = [
+    { label: "Spiele", value: stats.matches },
+    { label: "Tore", value: stats.goals },
+    { label: "Gelb", value: stats.yellow },
+    { label: "Gelb-Rot", value: stats.yellowRed },
+    { label: "Rot", value: stats.red },
+    { label: "Zeitstrafen", value: stats.timePenalties },
+    { label: "Wechsel", value: stats.substitutions },
+    { label: "Abbrüche", value: stats.abandoned },
+  ];
+  return (
+    <div className="stats-panel">
+      <div className="meta-grid">
+        <label><span>Von</span><input type="date" value={range.from} onChange={(event) => onRange({ from: event.target.value })} /></label>
+        <label><span>Bis</span><input type="date" value={range.to} onChange={(event) => onRange({ to: event.target.value })} /></label>
+      </div>
+      <div className="stats-tiles">
+        {tiles.map((tile) => (
+          <div key={tile.label} className="stat-tile"><strong>{tile.value}</strong><span>{tile.label}</span></div>
+        ))}
+      </div>
+      {stats.byAge.length > 0 && (
+        <ul className="stats-byage">
+          {stats.byAge.map((row) => <li key={row.label}><span>{row.label}</span><strong>{row.matches}</strong></li>)}
+        </ul>
+      )}
+      <button className="icon-button" onClick={onExport} disabled={stats.matches === 0}><Icon name="download" /> Statistik als CSV</button>
+    </div>
+  );
+}
+
+function SessionExpiredModal({ baseUrl }: { baseUrl: string }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch(`${baseUrl}auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ email, password }).toString(),
+      });
+      if (response.ok || response.redirected) {
+        window.location.reload();
+        return;
+      }
+      setError("E-Mail-Adresse oder Passwort ist ungültig.");
+    } catch {
+      setError("Keine Verbindung. Bitte erneut versuchen.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="session-title">
+        <span className="modal-symbol"><Icon name="logout" /></span>
+        <div className="dialog-kicker">Sitzung abgelaufen</div>
+        <h2 id="session-title">Bitte neu anmelden</h2>
+        {error && <div className="dialog-warning" role="alert">{error}</div>}
+        <p className="collapsible-hint">Dein aktuelles Spiel bleibt gespeichert.</p>
+        <form onSubmit={submit}>
+          <label className="player-field"><span>E-Mail-Adresse</span><input type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} required /></label>
+          <label className="player-field"><span>Passwort</span><input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label>
+          <div className="modal-actions">
+            <button className="save-button" disabled={busy}><Icon name="check" /> Anmelden</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
 }
 
 export default App;

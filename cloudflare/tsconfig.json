@@ -9,5 +9,6 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["./web-router.ts"]
+  "include": ["./**/*.ts", "../worker-configuration.d.ts"],
+  "exclude": ["./test/**/*.ts"]
 }
