@@ -171,7 +171,7 @@ function App() {
     <div className="app-shell">
       <header className="topbar no-print">
         <a className="brand" href="#top" aria-label="SQUORA Schiedsrichter Note Startseite">
-          <img src="/squora-logo.png" alt="" />
+          <img src={`${import.meta.env.BASE_URL}squora-logo.png`} alt="" />
           <span><strong>SQUORA</strong><small>Schiedsrichter Note</small></span>
         </a>
         <div className="save-status"><span className="save-dot" /> Auf diesem Gerät gespeichert</div>

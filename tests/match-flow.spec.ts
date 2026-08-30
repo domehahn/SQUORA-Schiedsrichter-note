@@ -52,3 +52,26 @@ test("führt ein Jugendspiel mit Tor, Wechsel, Karten und Spielende", async ({ p
   expect(stored.events.some((event: { kind: string; player?: string }) => event.kind === "goal" && event.player === "2")).toBeTruthy();
   expect(stored.phase).toBe("finished");
 });
+
+test("bleibt auf schmalen Smartphones vollständig bedienbar", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile-chromium");
+  await page.setViewportSize({ width: 320, height: 568 });
+  await page.goto("/");
+
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.getByRole("button", { name: "CSV" }).scrollIntoViewIfNeeded();
+  await expect(page.getByRole("button", { name: "CSV" })).toBeInViewport();
+  await expect(page.getByRole("button", { name: "Drucken" })).toBeInViewport();
+
+  await page.getByRole("button", { name: "Spiel starten" }).click();
+  const actionButtons = page.locator(".action-buttons button");
+  for (let index = 0; index < await actionButtons.count(); index += 1) {
+    expect((await actionButtons.nth(index).boundingBox())?.height).toBeGreaterThanOrEqual(44);
+  }
+
+  await page.locator(".team-actions.home").getByRole("button", { name: /Tor/ }).click();
+  await expect(page.getByRole("dialog")).toBeInViewport();
+  await expect(page.getByRole("button", { name: "Dialog schließen" })).toBeInViewport();
+  await expect(page.getByRole("button", { name: "Ereignis speichern" })).toBeInViewport();
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});

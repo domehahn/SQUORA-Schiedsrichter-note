@@ -8,6 +8,7 @@ export default defineConfig({
   },
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
+    { name: "mobile-chromium", use: { ...devices["iPhone 13"], browserName: "chromium" } },
   ],
   webServer: process.env.PLAYWRIGHT_EXISTING_SERVER ? undefined : {
       command: "npm run dev -- --host 127.0.0.1",

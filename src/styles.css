@@ -15,10 +15,10 @@
 }
 
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
-body { margin: 0; min-width: 320px; min-height: 100vh; background: radial-gradient(circle at 5% -10%, #dceaff 0, transparent 28rem), radial-gradient(circle at 100% 16%, #dff7f2 0, transparent 24rem), #f5f8fc; }
+html { scroll-behavior: smooth; overflow-x: hidden; }
+body { margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overflow-x: hidden; background: radial-gradient(circle at 5% -10%, #dceaff 0, transparent 28rem), radial-gradient(circle at 100% 16%, #dff7f2 0, transparent 24rem), #f5f8fc; }
 button, input, select { font: inherit; }
-button { cursor: pointer; }
+button { cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 button:disabled { cursor: not-allowed; opacity: .46; }
 
 .topbar { height: 76px; padding: 0 max(22px, calc((100vw - 1160px) / 2)); display: flex; align-items: center; justify-content: space-between; background: rgba(255,255,255,.88); border-bottom: 1px solid rgba(203,215,230,.8); backdrop-filter: blur(18px); position: sticky; top: 0; z-index: 20; }
@@ -169,15 +169,32 @@ input:disabled, select:disabled { color: #6a7687; background: #f4f6f9; }
   .action-buttons { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 640px) {
-  .topbar { height: 66px; padding: 0 16px; }.brand img { width: 43px; height: 43px; }.brand strong { font-size: 18px; }.save-status { font-size: 0; }.save-status::after { content: "Gespeichert"; font-size: 10px; }
-  main { width: min(100% - 20px, 1160px); margin-top: 12px; }.setup-card,.actions-section,.log-card { border-radius: 15px; padding: 18px 16px; }
-  .section-heading { align-items: flex-start; margin-bottom: 15px; }.section-heading h1,.section-heading h2 { font-size: 18px; }.section-heading p { display: none; }
-  .setup-grid { grid-template-columns: 1fr; }.rule-hint { grid-column: auto; }.scoreboard { min-height: 405px; border-radius: 17px; padding: 23px 14px 20px; }
-  .score-row { width: 100%; gap: 7px; margin-top: 24px; }.team input { font-size: 14px; }.team label { font-size: 8px; }.score { gap: 6px; }.score strong { width: 43px; height: 51px; border-radius: 10px; font-size: 28px; }.score span { font-size: 20px; }
-  .clock-block { margin-top: 27px; }.clock-time { font-size: 62px; }.clock-controls { margin-top: 24px; }.clock-controls button { flex: 1 1 135px; padding: 0 10px; }
-  .team-action-grid { grid-template-columns: 1fr; gap: 11px; }.action-buttons button { min-height: 53px; }
-  .log-tools { gap: 4px; }.icon-button { font-size: 0; padding: 8px; }.icon-button svg { width: 17px; }.event { grid-template-columns: 52px 35px 1fr 28px; }.event-copy strong { white-space: normal; }
-  .modal { padding: 25px 20px 20px; }.sub-fields { grid-template-columns: 1fr; }.modal-actions { flex-direction: column-reverse; }.modal-actions button { width: 100%; justify-content: center; }
+  .topbar { height: auto; min-height: calc(66px + env(safe-area-inset-top)); padding: env(safe-area-inset-top) max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left)); }
+  .brand img { width: 43px; height: 43px; }.brand strong { font-size: 18px; }.save-status { font-size: 0; }.save-status::after { content: "Gespeichert"; font-size: 10px; }
+  main { width: min(100% - 20px, 1160px); margin-top: 12px; margin-bottom: calc(48px + env(safe-area-inset-bottom)); }.setup-card,.actions-section,.log-card { border-radius: 15px; padding: 18px 16px; }
+  .section-heading { align-items: flex-start; flex-wrap: wrap; gap: 10px 16px; margin-bottom: 15px; }.section-heading h1,.section-heading h2 { font-size: 18px; }.section-heading p { display: none; }
+  .text-button { min-height: 44px; margin: -8px -8px -8px auto; }
+  .setup-grid { grid-template-columns: 1fr; }.rule-hint { grid-column: auto; }
+  input, select { min-height: 48px; font-size: 16px; }
+  .scoreboard { min-height: 0; border-radius: 17px; padding: 23px 14px 28px; }
+  .score-row { width: 100%; gap: 5px; margin-top: 24px; }.team input { min-height: 44px; padding-inline: 2px; font-size: 16px; }.team label { font-size: 8px; }.score { gap: 5px; }.score strong { width: 43px; height: 51px; border-radius: 10px; font-size: 28px; }.score span { font-size: 20px; }
+  .clock-block { margin-top: 24px; }.clock-time { font-size: clamp(52px, 17vw, 62px); }.clock-controls { width: 100%; margin-top: 24px; }.clock-controls button { min-height: 48px; flex: 1 1 135px; padding: 0 10px; }
+  .team-action-grid { grid-template-columns: 1fr; gap: 11px; }.action-buttons button { min-height: 56px; }
+  .log-card .section-heading { align-items: center; }.log-card .section-heading > div:first-child { min-width: 0; }.log-card .section-heading h2 { flex-wrap: wrap; }
+  .log-tools { width: 100%; gap: 8px; }.icon-button { min-height: 44px; flex: 1; justify-content: center; padding: 8px 12px; font-size: 11px; }.icon-button svg { width: 17px; }.event { min-height: 72px; grid-template-columns: 48px 35px minmax(0,1fr) 44px; }.event-copy strong { white-space: normal; }.delete-event { width: 44px; height: 44px; }
+  .modal-backdrop { align-items: end; padding: max(12px, env(safe-area-inset-top)) 0 0; }
+  .modal { width: 100%; max-height: calc(100dvh - max(12px, env(safe-area-inset-top))); overflow-y: auto; border-radius: 20px 20px 0 0; padding: 25px 20px max(20px, env(safe-area-inset-bottom)); }
+  .modal-close { width: 44px; height: 44px; right: 12px; top: 12px; }.sub-fields { grid-template-columns: 1fr; }.modal-actions { flex-direction: column-reverse; }.modal-actions button { width: 100%; min-height: 48px; justify-content: center; }
+  .toast { right: max(12px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom)); left: max(12px, env(safe-area-inset-left)); justify-content: center; max-width: none; }
+}
+
+@media (max-width: 360px) {
+  main { width: calc(100% - 16px); }
+  .setup-card,.actions-section,.log-card { padding-inline: 14px; }
+  .brand { gap: 6px; }.brand img { width: 40px; height: 40px; }.brand strong { font-size: 17px; }.brand small { font-size: 10px; }
+  .save-status::after { font-size: 9px; }
+  .scoreboard { padding-inline: 10px; }.score strong { width: 40px; }.team input { font-size: 15px; }
+  .team-actions { padding: 13px; }.action-buttons { gap: 7px; }.action-buttons button { min-height: 72px; flex-direction: column; justify-content: center; gap: 5px; padding: 8px 5px; text-align: center; }.action-buttons button > span:last-child { align-items: center; }.action-buttons small { white-space: normal; }
 }
 
 @media print {
