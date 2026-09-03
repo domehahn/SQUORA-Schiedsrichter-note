@@ -10,7 +10,7 @@
     {
       "binding": "DB",
       "database_name": "schiedsrichter-note-production",
-      "database_id": "00000000-0000-4000-8000-000000000001",
+      "database_id": "25faaf18-f659-48aa-9d50-01ebc38fb931",
       "migrations_dir": "migrations"
     }
   ],
@@ -38,7 +38,7 @@
       "name": "schiedsrichter-note-web-development",
       "workers_dev": true,
       "d1_databases": [
-        { "binding": "DB", "database_name": "schiedsrichter-note-development", "database_id": "00000000-0000-4000-8000-000000000002", "migrations_dir": "migrations" }
+        { "binding": "DB", "database_name": "schiedsrichter-note-development", "database_id": "1b56a7b7-90ad-4235-bcd8-4f80ef8756fb", "migrations_dir": "migrations" }
       ],
       "kv_namespaces": [
         { "binding": "LEGACY_DATA", "id": "cc85a29c39484d0aaee95baf5e0311d3" }
@@ -51,7 +51,7 @@
       "name": "schiedsrichter-note-web-staging",
       "workers_dev": false,
       "d1_databases": [
-        { "binding": "DB", "database_name": "schiedsrichter-note-staging", "database_id": "00000000-0000-4000-8000-000000000003", "migrations_dir": "migrations" }
+        { "binding": "DB", "database_name": "schiedsrichter-note-staging", "database_id": "0bc2a1b5-cc28-46a8-8762-aeb446aa01e6", "migrations_dir": "migrations" }
       ],
       "kv_namespaces": [
         { "binding": "LEGACY_DATA", "id": "cc85a29c39484d0aaee95baf5e0311d3" }
