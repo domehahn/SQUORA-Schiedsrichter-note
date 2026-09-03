@@ -1,15 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
-import { openApp, passGate } from "./helpers";
-
-const MATCH_KEY_PREFIX = "squora-referee-note-match-v1:";
-
-function matchKey(page: Page): Promise<string> {
-  return page.evaluate((prefix) => {
-    const key = Object.keys(localStorage).find((entry) => entry.startsWith(prefix));
-    if (!key) throw new Error("no match key in localStorage");
-    return key;
-  }, MATCH_KEY_PREFIX);
-}
+import { expect, test } from "@playwright/test";
+import { openApp } from "./helpers";
 
 test("erfasst eine Zeitstrafe, bearbeitet den Eintrag, speichert und öffnet ihn wieder", async ({ page }) => {
   await openApp(page);
@@ -72,34 +62,25 @@ test("legt ein Turnier an und pfeift eine Ansetzung an", async ({ page }) => {
 });
 
 test("spielt ein K.-o.-Spiel bis ins Elfmeterschießen durch", async ({ page }) => {
+  await page.clock.install();
   await openApp(page);
-  const key = await matchKey(page);
-  const forward = async (field: string) => {
-    await page.evaluate(([k, f]) => {
-      const state = JSON.parse(localStorage.getItem(k)!);
-      state[f] = 900_000;
-      state.runningSince = null;
-      localStorage.setItem(k, JSON.stringify(state));
-    }, [key, field]);
-    await page.reload();
-    await passGate(page);
-  };
+  const forward = () => page.clock.fastForward(660_000); // exceeds a 1-min regulation half and a 10-min extra-time half
 
   await page.getByText("K.-o.-Spiel", { exact: false }).click();
   await page.locator("select").first().selectOption("custom");
   await page.locator('input[type="number"]').first().fill("1");
   await page.getByRole("button", { name: "Spiel starten" }).click();
 
-  await forward("firstHalfMs");
+  await forward();
   await page.getByRole("button", { name: "Halbzeit", exact: true }).click();
   await page.getByRole("button", { name: "2. Halbzeit starten" }).click();
-  await forward("secondHalfMs");
+  await forward();
   await page.getByRole("button", { name: "Verlängerung", exact: true }).click();
 
-  await forward("extraFirstMs");
+  await forward();
   await page.getByRole("button", { name: "Ende 1. HZ Verl." }).click();
   await page.getByRole("button", { name: "2. HZ Verl. starten" }).click();
-  await forward("extraSecondMs");
+  await forward();
   await page.getByRole("button", { name: "Elfmeterschießen" }).click();
 
   await expect(page.locator(".shootout-panel")).toBeVisible();

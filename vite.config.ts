@@ -40,13 +40,13 @@ export default defineConfig(({ mode }) => {
           navigateFallback: null,
           runtimeCaching: [
             {
+              urlPattern: ({ url }) => url.pathname.startsWith("/api/") || url.pathname.startsWith("/auth/"),
+              handler: "NetworkOnly",
+            },
+            {
               urlPattern: ({ request }) => request.mode === "navigate",
               handler: "NetworkFirst",
               options: { cacheName: "html", networkTimeoutSeconds: 4, expiration: { maxEntries: 8 } },
-            },
-            {
-              urlPattern: ({ url }) => url.pathname.endsWith("/api/archive"),
-              handler: "NetworkOnly",
             },
           ],
         },

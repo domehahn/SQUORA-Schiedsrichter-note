@@ -1,15 +1,14 @@
-import { decryptString, encryptString } from "./crypto";
 import { normalizeMatch, type MatchState, type SavedMatch } from "./match";
 import { sanitizeTournaments, type Tournament } from "./tournament";
 import { sanitizeTeams, type SavedTeam } from "./teams";
-import { sanitizeTenantIndex, type TenantIndex } from "./tenant";
+import { isTenantMeta, type TenantMeta } from "./tenant";
 
 const BASE = import.meta.env.BASE_URL ?? "/";
-const TENANTS_URL = `${BASE}api/tenants`;
-const LEGACY_URL = `${BASE}api/archive`;
-const tenantDataUrl = (id: string) => `${BASE}api/tenant/${encodeURIComponent(id)}`;
+const API = `${BASE}api/v1`;
+const stateUrl = (id: string) => `${API}/clubs/${encodeURIComponent(id)}/state`;
+const versions = new Map<string, number>();
 
-export type SyncState = "idle" | "syncing" | "synced" | "offline" | "error";
+export type SyncState = "idle" | "syncing" | "synced" | "offline" | "error" | "conflict";
 
 export interface CloudData {
   archive: SavedMatch[];
@@ -34,7 +33,7 @@ export function sanitizeArchive(value: unknown): SavedMatch[] {
 }
 
 function toStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string").slice(0, 5000) : [];
 }
 
 export function parseCloudData(value: unknown): CloudData {
@@ -46,16 +45,6 @@ export function parseCloudData(value: unknown): CloudData {
     teams: sanitizeTeams(data.teams),
     current: data.current ? normalizeMatch(data.current) : null,
   };
-}
-
-function serializeCloudData(data: CloudData): string {
-  return JSON.stringify({
-    archive: data.archive,
-    deletedIds: data.deletedIds,
-    tournaments: data.tournaments,
-    teams: data.teams,
-    current: data.current,
-  });
 }
 
 export function mergeArchives(...lists: SavedMatch[][]): SavedMatch[] {
@@ -72,83 +61,58 @@ export function applyDeletions(archive: SavedMatch[], deletedIds: Iterable<strin
   return archive.filter((entry) => !removed.has(entry.state.id));
 }
 
-// --- Tenant index (unencrypted metadata: names + KDF salt + verifier) ---
-
-export async function fetchTenantIndex(): Promise<TenantIndex | null> {
+export async function fetchTenantIndex(): Promise<TenantMeta[] | null> {
   try {
-    const response = await fetch(TENANTS_URL, { headers: { Accept: "application/json" } });
-    if (response.status === 401) return null;
+    const response = await fetch(`${API}/clubs`, { headers: { Accept: "application/json" } });
     if (!response.ok) return null;
-    return sanitizeTenantIndex(await response.json());
-  } catch {
-    return null;
-  }
+    const body = await response.json() as { clubs?: unknown };
+    return Array.isArray(body.clubs) ? body.clubs.filter(isTenantMeta) : [];
+  } catch { return null; }
 }
 
-export async function pushTenantIndex(index: TenantIndex): Promise<boolean> {
+export async function createTenant(name: string): Promise<TenantMeta | null> {
   try {
-    const response = await fetch(TENANTS_URL, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tenants: index.tenants }),
-    });
-    return response.ok;
-  } catch {
-    return false;
-  }
+    const response = await fetch(`${API}/clubs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+    if (!response.ok) return null;
+    const body = await response.json() as { club?: unknown };
+    return isTenantMeta(body.club) ? body.club : null;
+  } catch { return null; }
 }
 
-// --- Per-tenant encrypted payload ---
+export type TenantFetch = { ok: true; data: CloudData } | { ok: false; reason: "empty" | "offline" | "decrypt" | "unauthorized" };
 
-export type TenantFetch = { ok: true; data: CloudData } | { ok: false; reason: "empty" | "offline" | "decrypt" };
-
-export async function fetchTenantData(tenantId: string, key: CryptoKey): Promise<TenantFetch> {
+export async function fetchTenantData(tenantId: string, _key?: CryptoKey): Promise<TenantFetch> {
   try {
-    const response = await fetch(tenantDataUrl(tenantId), { headers: { Accept: "application/json" } });
-    if (response.status === 404) return { ok: true, data: emptyCloudData() };
+    const response = await fetch(stateUrl(tenantId), { headers: { Accept: "application/json" } });
+    if (response.status === 401 || response.status === 403 || response.status === 404) return { ok: false, reason: "unauthorized" };
     if (!response.ok) return { ok: false, reason: "offline" };
-    const body = (await response.json()) as { iv?: string; ciphertext?: string };
-    if (!body.iv || !body.ciphertext) return { ok: true, data: emptyCloudData() };
-    const plain = await decryptString(key, body.iv, body.ciphertext);
-    if (plain === null) return { ok: false, reason: "decrypt" };
-    return { ok: true, data: parseCloudData(JSON.parse(plain)) };
-  } catch {
-    return { ok: false, reason: "offline" };
-  }
+    const body = await response.json() as Record<string, unknown>;
+    versions.set(tenantId, typeof body.version === "number" ? body.version : 0);
+    return { ok: true, data: parseCloudData(body) };
+  } catch { return { ok: false, reason: "offline" }; }
 }
 
-export async function pushTenantData(tenantId: string, key: CryptoKey, data: CloudData): Promise<boolean> {
+export async function pushTenantData(tenantId: string, _key: CryptoKey, data: CloudData): Promise<boolean> {
   try {
-    const encrypted = await encryptString(key, serializeCloudData(data));
-    const response = await fetch(tenantDataUrl(tenantId), {
+    const response = await fetch(stateUrl(tenantId), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(encrypted),
+      body: JSON.stringify({ version: versions.get(tenantId) ?? 0, ...data }),
     });
-    return response.ok;
-  } catch {
-    return false;
-  }
+    if (response.status === 409) return false;
+    if (!response.ok) return false;
+    const body = await response.json() as { version?: unknown };
+    if (typeof body.version === "number") versions.set(tenantId, body.version);
+    return true;
+  } catch { return false; }
 }
 
-export async function deleteTenantData(tenantId: string): Promise<void> {
-  try {
-    await fetch(tenantDataUrl(tenantId), { method: "DELETE" });
-  } catch {
-    /* offline – the index removal is what matters */
-  }
-}
-
-// --- Legacy single-blob endpoint, kept only so pre-tenant data can be imported once ---
-
+/** Read-only legacy source; migration requires explicit user mapping in the UI. */
 export async function fetchLegacy(): Promise<CloudData | null> {
   try {
-    const response = await fetch(LEGACY_URL, { headers: { Accept: "application/json" } });
+    const response = await fetch(`${BASE}api/archive`, { headers: { Accept: "application/json" } });
     if (!response.ok) return null;
     const data = parseCloudData(await response.json());
-    const empty = data.archive.length === 0 && data.tournaments.length === 0 && data.teams.length === 0 && !data.current;
-    return empty ? null : data;
-  } catch {
-    return null;
-  }
+    return data.archive.length || data.tournaments.length || data.teams.length || data.current ? data : null;
+  } catch { return null; }
 }

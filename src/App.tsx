@@ -5,7 +5,8 @@ import { MatchReport } from "./MatchReport";
 import { useWakeLock } from "./useWakeLock";
 import { cue, unlockAudio } from "./notify";
 import { TenantGate } from "./TenantGate";
-import { ACTIVE_TENANT_KEY, SOUND_KEY, lsKey } from "./localData";
+import { ACTIVE_TENANT_KEY, SOUND_KEY } from "./localData";
+import { readEncryptedCache, writeEncryptedCache } from "./encryptedCache";
 import type { TenantMeta } from "./tenant";
 import {
   applyDeletions,
@@ -60,7 +61,7 @@ import {
   type Fixture,
   type Tournament,
 } from "./tournament";
-import { createSavedTeam, mergeTeams, sanitizeTeams, type SavedTeam } from "./teams";
+import { createSavedTeam, mergeTeams, type SavedTeam } from "./teams";
 import { parseDfbnetRoster } from "./dfbnet";
 import { seasonStats, statsCsvRows } from "./stats";
 
@@ -87,48 +88,6 @@ function parseTimeText(text: string): number | null {
   return match ? (Number(match[1]) * 60 + Number(match[2])) * 1000 : null;
 }
 
-function loadMatch(tenantId: string): MatchState {
-  try {
-    const saved = localStorage.getItem(lsKey("match", tenantId));
-    return saved ? normalizeMatch(JSON.parse(saved)) : createMatch();
-  } catch {
-    return createMatch();
-  }
-}
-
-function loadArchive(tenantId: string): SavedMatch[] {
-  try {
-    return sanitizeArchive(JSON.parse(localStorage.getItem(lsKey("archive", tenantId)) ?? "[]"));
-  } catch {
-    return [];
-  }
-}
-
-function loadDeleted(tenantId: string): string[] {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(lsKey("deleted", tenantId)) ?? "[]") as unknown;
-    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
-function loadTournaments(tenantId: string): Tournament[] {
-  try {
-    return sanitizeTournaments(JSON.parse(localStorage.getItem(lsKey("tournaments", tenantId)) ?? "[]"));
-  } catch {
-    return [];
-  }
-}
-
-function loadTeams(tenantId: string): SavedTeam[] {
-  try {
-    return sanitizeTeams(JSON.parse(localStorage.getItem(lsKey("teams", tenantId)) ?? "[]"));
-  } catch {
-    return [];
-  }
-}
-
 function loadSound(): boolean {
   try {
     return localStorage.getItem(SOUND_KEY) === "1";
@@ -143,6 +102,7 @@ const syncStatusLabel: Record<SyncState, string> = {
   synced: "Geräteübergreifend gespeichert",
   offline: "Offline · nur auf diesem Gerät",
   error: "Sync-Fehler · erneut versuchen",
+  conflict: "Versionskonflikt · neu laden",
 };
 
 interface Notice {
@@ -158,11 +118,11 @@ interface AppProps {
 
 function App({ tenant, cryptoKey, onLock }: AppProps) {
   const tenantId = tenant.id;
-  const [match, setMatch] = useState<MatchState>(() => loadMatch(tenantId));
-  const [archive, setArchive] = useState<SavedMatch[]>(() => loadArchive(tenantId));
-  const [deletedIds, setDeletedIds] = useState<string[]>(() => loadDeleted(tenantId));
-  const [tournaments, setTournaments] = useState<Tournament[]>(() => loadTournaments(tenantId));
-  const [teams, setTeams] = useState<SavedTeam[]>(() => loadTeams(tenantId));
+  const [match, setMatch] = useState<MatchState>(createMatch);
+  const [archive, setArchive] = useState<SavedMatch[]>([]);
+  const [deletedIds, setDeletedIds] = useState<string[]>([]);
+  const [tournaments, setTournaments] = useState<Tournament[]>([]);
+  const [teams, setTeams] = useState<SavedTeam[]>([]);
   const [soundOn, setSoundOn] = useState<boolean>(loadSound);
   const [sessionExpired, setSessionExpired] = useState(false);
   const [syncState, setSyncState] = useState<SyncState>("idle");
@@ -184,17 +144,12 @@ function App({ tenant, cryptoKey, onLock }: AppProps) {
 
   useWakeLock(match.runningSince !== null);
 
-  useEffect(() => { try { localStorage.setItem(lsKey("match", tenantId), JSON.stringify(match)); } catch { /* */ } }, [match, tenantId]);
-  useEffect(() => { try { localStorage.setItem(lsKey("archive", tenantId), JSON.stringify(archive)); } catch { /* */ } }, [archive, tenantId]);
-  useEffect(() => { try { localStorage.setItem(lsKey("deleted", tenantId), JSON.stringify(deletedIds)); } catch { /* */ } }, [deletedIds, tenantId]);
-  useEffect(() => { try { localStorage.setItem(lsKey("tournaments", tenantId), JSON.stringify(tournaments)); } catch { /* */ } }, [tournaments, tenantId]);
-  useEffect(() => { try { localStorage.setItem(lsKey("teams", tenantId), JSON.stringify(teams)); } catch { /* */ } }, [teams, tenantId]);
   useEffect(() => { try { localStorage.setItem(SOUND_KEY, soundOn ? "1" : "0"); } catch { /* ignore */ } }, [soundOn]);
 
   useEffect(() => {
     const check = async () => {
       try {
-        const response = await fetch(`${import.meta.env.BASE_URL}api/tenants`, { headers: { Accept: "application/json" } });
+        const response = await fetch(`${import.meta.env.BASE_URL}api/v1/me`, { headers: { Accept: "application/json" } });
         if (response.status === 401) setSessionExpired(true);
       } catch {
         /* offline – ignore */
@@ -225,14 +180,21 @@ function App({ tenant, cryptoKey, onLock }: AppProps) {
   useEffect(() => {
     let cancelled = false;
     setSyncState("syncing");
-    fetchTenantData(tenantId, cryptoKey).then(async (result) => {
+    Promise.all([readEncryptedCache(tenantId, cryptoKey), fetchTenantData(tenantId, cryptoKey)]).then(async ([cached, result]) => {
       if (cancelled) return;
       if (!result.ok) {
-        setSyncState(result.reason === "decrypt" ? "error" : "offline");
+        if (cached) reconcile(cached);
+        if (result.reason === "unauthorized") setSessionExpired(true);
+        setSyncState(result.reason === "unauthorized" ? "error" : "offline");
         bootstrapped.current = true;
         return;
       }
+      if (cached) {
+        latest.current = cached;
+        reconcile(cached);
+      }
       const merged = reconcile(result.data);
+      await writeEncryptedCache(tenantId, cryptoKey, merged);
       const ok = await pushTenantData(tenantId, cryptoKey, merged);
       if (cancelled) return;
       setSyncState(ok ? "synced" : "offline");
@@ -249,7 +211,9 @@ function App({ tenant, cryptoKey, onLock }: AppProps) {
     if (!bootstrapped.current) return;
     setSyncState("syncing");
     const handle = window.setTimeout(async () => {
-      const ok = await pushTenantData(tenantId, cryptoKey, { archive, deletedIds, tournaments, teams, current: match });
+      const data = { archive, deletedIds, tournaments, teams, current: match };
+      await writeEncryptedCache(tenantId, cryptoKey, data);
+      const ok = await pushTenantData(tenantId, cryptoKey, data);
       setSyncState(ok ? "synced" : "error");
       if (ok) setLastSyncedAt(Date.now());
     }, 1500);
@@ -1204,7 +1168,7 @@ function App({ tenant, cryptoKey, onLock }: AppProps) {
           />
         </CollapsibleSection>
 
-        <p className="privacy-note no-print">Alle Daten dieses Vereins werden mit deiner Passphrase Ende-zu-Ende verschlüsselt und getrennt von anderen Vereinen bei Cloudflare abgeglichen. Ohne die Passphrase sind sie nicht wiederherstellbar. Das aktuell entsperrte Spiel liegt zusätzlich unverschlüsselt in diesem Browser.</p>
+        <p className="privacy-note no-print">Der Server prüft deine Vereinsmitgliedschaft bei jedem Zugriff. Offline-Daten werden ausschließlich AES-256-GCM-verschlüsselt in IndexedDB gespeichert; die Cache-Passphrase und der Schlüssel bleiben im Arbeitsspeicher dieses Browsers.</p>
       </main>
 
       {dialog && (

@@ -1,15 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
-import { openApp, passGate } from "./helpers";
-
-const MATCH_KEY_PREFIX = "squora-referee-note-match-v1:";
-
-function matchKey(page: Page): Promise<string> {
-  return page.evaluate((prefix) => {
-    const key = Object.keys(localStorage).find((entry) => entry.startsWith(prefix));
-    if (!key) throw new Error("no match key in localStorage");
-    return key;
-  }, MATCH_KEY_PREFIX);
-}
+import { expect, test } from "@playwright/test";
+import { openApp } from "./helpers";
 
 test("erlaubt eigene Halbzeitlängen für F- und G-Jugend", async ({ page }) => {
   await openApp(page);
@@ -32,6 +22,7 @@ test("erlaubt eigene Halbzeitlängen für F- und G-Jugend", async ({ page }) => 
 });
 
 test("führt ein Jugendspiel mit Tor, Wechsel, Karten und Spielende", async ({ page }) => {
+  await page.clock.install();
   await openApp(page);
   await page.getByLabel("Name der Heimmannschaft").fill("SV Blau");
   await page.getByLabel("Name der Gastmannschaft").fill("FC Grün");
@@ -49,15 +40,7 @@ test("führt ein Jugendspiel mit Tor, Wechsel, Karten und Spielende", async ({ p
   await page.locator(".modal input").first().fill("7");
   await page.getByRole("button", { name: "Ereignis speichern" }).click();
 
-  const key = await matchKey(page);
-  await page.evaluate((k) => {
-    const state = JSON.parse(localStorage.getItem(k)!);
-    state.firstHalfMs = 60_500;
-    state.runningSince = null;
-    localStorage.setItem(k, JSON.stringify(state));
-  }, key);
-  await page.reload();
-  await passGate(page);
+  await page.clock.fastForward(65_000);
   await expect(page.getByText(/Nachspielzeit/).first()).toBeVisible();
   await page.getByRole("button", { name: "Halbzeit", exact: true }).click();
   await page.getByRole("button", { name: "2. Halbzeit starten" }).click();
@@ -68,21 +51,11 @@ test("führt ein Jugendspiel mit Tor, Wechsel, Karten und Spielende", async ({ p
   await page.getByRole("button", { name: "Ereignis speichern" }).click();
   await expect(page.getByText("Wechsel SV Blau · Nr. 8 raus, Nr. 14 rein", { exact: true })).toBeVisible();
 
-  await page.evaluate((k) => {
-    const state = JSON.parse(localStorage.getItem(k)!);
-    state.secondHalfMs = 60_250;
-    state.runningSince = null;
-    localStorage.setItem(k, JSON.stringify(state));
-  }, key);
-  await page.reload();
-  await passGate(page);
+  await page.clock.fastForward(65_000);
   await page.getByRole("button", { name: "Spielende", exact: true }).click();
   await expect(page.getByText("Beendet", { exact: true })).toBeVisible();
   await expect(page.locator(".event-table").getByText("Spielende", { exact: true })).toBeVisible();
-
-  const stored = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)!), key);
-  expect(stored.events.some((event: { kind: string; player?: string }) => event.kind === "goal" && event.player === "2")).toBeTruthy();
-  expect(stored.phase).toBe("finished");
+  await expect(page.locator(".event-table")).toContainText("Tor SV Blau · Nr. 2");
 });
 
 test("bleibt auf schmalen Smartphones vollständig bedienbar", async ({ page }, testInfo) => {

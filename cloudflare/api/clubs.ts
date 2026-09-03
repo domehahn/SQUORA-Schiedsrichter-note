@@ -35,12 +35,13 @@ export async function createClub(request: Request, env: Env, auth: AuthContext, 
   const id = newId();
   const now = new Date().toISOString();
   const slug = slugify(name);
+  const cacheSalt = randomSalt();
   await env.DB.batch([
-    env.DB.prepare("INSERT INTO clubs (id,name,slug,cache_salt,status,created_at,updated_at) VALUES (?,?,?,?, 'active',?,?)").bind(id, name, slug, randomSalt(), now, now),
+    env.DB.prepare("INSERT INTO clubs (id,name,slug,cache_salt,status,created_at,updated_at) VALUES (?,?,?,?, 'active',?,?)").bind(id, name, slug, cacheSalt, now, now),
     env.DB.prepare("INSERT INTO memberships (club_id,user_id,role,status,created_at,updated_at) VALUES (?,?,'club_owner','active',?,?)").bind(id, auth.userId, now, now),
   ]);
   await writeAudit(env.DB, { clubId: id, userId: auth.userId, action: "CLUB_CREATED", entityType: "club", entityId: id });
-  return json({ club: { id, name, slug, role: "club_owner", permissions: ROLE_PERMISSIONS.club_owner } }, requestId, 201);
+  return json({ club: { id, name, slug, cacheSalt, role: "club_owner", permissions: ROLE_PERMISSIONS.club_owner } }, requestId, 201);
 }
 
 export async function getClub(env: Env, auth: AuthContext, clubId: string, requestId: string): Promise<Response> {
@@ -50,4 +51,3 @@ export async function getClub(env: Env, auth: AuthContext, clubId: string, reque
   if (!club) throw new HttpError(404, "NOT_FOUND", "The requested resource was not found.");
   return json({ club: { ...club, role: context.role, permissions: context.permissions } }, requestId);
 }
-
