@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { E2E } from "./global-setup";
+import { E2E } from "./fixtures";
 import { apiStatus, login, passGate } from "./helpers";
 
 test.describe.configure({ mode: "serial" });
