@@ -43,9 +43,6 @@
       "d1_databases": [
         { "binding": "DB", "database_name": "schiedsrichter-note-development", "database_id": "1b56a7b7-90ad-4235-bcd8-4f80ef8756fb", "migrations_dir": "migrations" }
       ],
-      "kv_namespaces": [
-        { "binding": "LEGACY_DATA", "id": "cc85a29c39484d0aaee95baf5e0311d3" }
-      ],
       "ratelimits": [
         { "name": "LOGIN_RATE_LIMITER", "namespace_id": "2026090302", "simple": { "limit": 20, "period": 60 } },
         { "name": "EXPORT_RATE_LIMITER", "namespace_id": "2026090321", "simple": { "limit": 20, "period": 60 } },
@@ -57,9 +54,6 @@
       "workers_dev": false,
       "d1_databases": [
         { "binding": "DB", "database_name": "schiedsrichter-note-staging", "database_id": "0bc2a1b5-cc28-46a8-8762-aeb446aa01e6", "migrations_dir": "migrations" }
-      ],
-      "kv_namespaces": [
-        { "binding": "LEGACY_DATA", "id": "cc85a29c39484d0aaee95baf5e0311d3" }
       ],
       "ratelimits": [
         { "name": "LOGIN_RATE_LIMITER", "namespace_id": "2026090303", "simple": { "limit": 10, "period": 60 } },
