@@ -5,6 +5,7 @@ import { login, logout, me } from "./api/auth";
 import { createMatch, deleteMatch, getMatch, listMatches, updateMatch } from "./api/matches";
 import { getState, putState } from "./api/state";
 import { createTeam, listTeams } from "./api/teams";
+import { confirmDfbnetImport, createDfbnetImport, listDfbnetImports } from "./api/dfbnet";
 import { requireAuth, type AuthContext } from "./auth/session";
 import { errorResponse, HttpError, recordRequest, SECURITY_HEADERS, withHeaders } from "./core/http";
 import { readLegacy } from "./legacy/kv-migration";
@@ -87,6 +88,22 @@ async function routeAuthenticated(request: Request, env: Env, auth: AuthContext,
     const teamId = decodeURIComponent(teamState[2]);
     if (request.method === "GET") return getState(env, auth, clubId, teamId, requestId);
     if (request.method === "PUT") return putState(request, env, auth, clubId, teamId, requestId);
+    return methodNotAllowed();
+  }
+  const imports = path.match(/^\/api\/v1\/clubs\/([^/]+)\/teams\/([^/]+)\/dfbnet\/imports$/u);
+  if (imports) {
+    const clubId = decodeURIComponent(imports[1]);
+    const teamId = decodeURIComponent(imports[2]);
+    if (request.method === "GET") return listDfbnetImports(request, env, auth, clubId, teamId, requestId);
+    if (request.method === "POST") return createDfbnetImport(request, env, auth, clubId, teamId, requestId);
+    return methodNotAllowed();
+  }
+  const importConfirm = path.match(/^\/api\/v1\/clubs\/([^/]+)\/teams\/([^/]+)\/dfbnet\/imports\/([^/]+)\/confirm$/u);
+  if (importConfirm) {
+    const clubId = decodeURIComponent(importConfirm[1]);
+    const teamId = decodeURIComponent(importConfirm[2]);
+    const importId = decodeURIComponent(importConfirm[3]);
+    if (request.method === "POST") return confirmDfbnetImport(request, env, auth, clubId, teamId, importId, requestId);
     return methodNotAllowed();
   }
   const matches = path.match(/^\/api\/v1\/clubs\/([^/]+)\/matches$/u);

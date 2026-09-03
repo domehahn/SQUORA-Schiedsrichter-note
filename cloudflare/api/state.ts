@@ -2,20 +2,8 @@ import type { AuthContext } from "../auth/session";
 import { HttpError, json, readJson, requireSameOrigin } from "../core/http";
 import { isId } from "../core/id";
 import { boundedJson, integerValue, objectValue } from "../core/validation";
+import { minimize } from "../core/dfbnet";
 import { requireTeamAccess } from "../middleware/tenant";
-
-const FORBIDDEN_DFBNET_FIELDS = new Set(["birthdate", "birth_date", "geburtsdatum", "pass", "passnumber", "passnummer", "nationality", "nationalität", "eligibility", "spielrecht", "registrationdate"]);
-
-function minimize(value: unknown, depth = 0): unknown {
-  if (depth > 20) throw new HttpError(422, "VALIDATION_FAILED", "The request data is invalid.");
-  if (Array.isArray(value)) return value.map((entry) => minimize(entry, depth + 1));
-  if (!value || typeof value !== "object") return value;
-  const result: Record<string, unknown> = {};
-  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-    if (!FORBIDDEN_DFBNET_FIELDS.has(key.toLowerCase())) result[key] = minimize(child, depth + 1);
-  }
-  return result;
-}
 
 function arrayValue(source: Record<string, unknown>, key: string, max: number): unknown[] {
   const value = source[key];
