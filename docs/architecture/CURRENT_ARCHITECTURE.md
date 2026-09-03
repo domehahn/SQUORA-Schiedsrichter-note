@@ -1,79 +1,95 @@
-# Current architecture baseline
+# Current architecture
 
-Status: 2026-09-03, commit `3199a50` plus the preserved local lineup changes.
+Status: 2026-09-03, commit `96112ef`. Supersedes the pre-D1 baseline.
+Per-epic detail: `docs/EPIC_STATUS.md`.
 
 ## Runtime
 
-The application is a React 19/Vite PWA served by one Cloudflare Worker below
-`squora.de/schiedsrichter-note/`. The Worker serves static assets, implements a
-single-login form and exposes legacy synchronization endpoints. Vite's service
-worker precaches static assets and uses `NetworkFirst` for navigations.
+React 19 / Vite PWA served by a single Cloudflare Worker
+(`cloudflare/worker.ts`). The Worker serves the static build (`ASSETS`,
+`run_worker_first`), renders the login form, and exposes the `/api/v1` REST API.
+Target origin `schiri.squora.de`; the `/schiedsrichter-note` path prefix remains
+only as a legacy redirect. Vite PWA precaches static assets and forces
+`NetworkOnly` for `/api/*` and `/auth/*`.
 
-## Authentication and sessions
+## Authentication & sessions
 
-- Accounts are configured through `AUTH_EMAIL`, `AUTH_PASSWORD_HASH` and the
-  optional `AUTH_USERS` secret instead of an authoritative user table.
-- A successful PBKDF2 password check produces a signed, self-contained HMAC
-  cookie valid for eight hours.
-- Sessions cannot be individually enumerated or revoked. Disabling an account
-  requires configuration changes; there is no account lifecycle.
-- The cookie is HttpOnly, Secure and SameSite=Strict, but shares an origin with
-  other applications under `squora.de`.
+- Accounts currently come from the `AUTH_USERS` bootstrap secret; D1 `users` is
+  the record they resolve to. A self-serve invite/registration flow is not built.
+- Login: PBKDF2 password check → a random 256-bit session token; only
+  `SHA-256(token)` is stored in `sessions`. Cookie `HttpOnly; Secure;
+  SameSite=Strict`, 8 h expiry.
+- Sessions are individually and bulk revocable (`/api/v1/auth/logout`,
+  `/logout-all`). `optionalAuth` re-checks `users.status='active'` and
+  `revoked_at IS NULL AND expires_at > now` on every request, so disabling an
+  account or revoking a session takes effect immediately.
 
-## Tenant and authorization model
+## Tenant & authorization model
 
-- The browser creates arbitrary tenant IDs and uploads an unencrypted tenant
-  index scoped only by the login e-mail.
-- Data keys follow `note:<email>:t:<clientTenantId>` in KV.
-- Any logged-in account can create, read, overwrite or delete any syntactically
-  valid tenant ID within its own e-mail namespace. There is no server-side club,
-  membership, role or permission record.
-- Existing tests prove key separation and format validation, but not
-  membership-based authorization or cross-user BOLA resistance.
+- D1 is authoritative: `users → memberships (role, status, team_id?) → clubs →
+  teams → matches/match_events/tournaments/players/dfbnet_imports/audit_log`.
+- `middleware/tenant.ts` produces a `TenantContext` (`requireTenantAccess`) or
+  `TeamContext` (`requireTeamAccess`) — active session → active membership →
+  role permission — before any club/team query. No handler touches club data
+  without one.
+- Club id / team id / entity id from the URL or body are untrusted selectors.
+  Foreign or missing resources return 404, never 403/500.
+- Composite primary and foreign keys (`(club_id, id)`,
+  `(club_id, team_id) → teams`) make cross-tenant rows impossible at the DB
+  level.
+- RBAC: 5 roles, 17 permissions in `auth/roles.ts` / `auth/permissions.ts`
+  (`docs/architecture/RBAC.md`).
 
-This does not meet the required invariant. Encryption and a client-selected ID
-are confidentiality aids, not an authorization boundary.
+## Data & synchronization
 
-## Data and synchronization
+- The team (Jugend) is the isolation unit inside a club. Each `(club, team)` has
+  its own `team_sync_versions` (aggregate optimistic-lock counter), `team_drafts`
+  (live match + clock) and `team_rosters` (minimized opponent library).
+- `GET/PUT /api/v1/clubs/:club/teams/:team/state` is the whole-team snapshot
+  (archive, tournaments, roster library, live match). PUT is guarded by
+  `version`; a mismatch is 409 `VERSION_CONFLICT` with rollback of the aggregate
+  counter on batch failure.
+- Individual match CRUD (`/matches`, `/matches/:id`) is cursor-paginated,
+  soft-deletes (`deleted_at`), per-row `version`, and writes `audit_log`.
+- `FORBIDDEN_DFBNET_FIELDS` strips birthdate/pass/nationality/eligibility from
+  every synced payload server-side (`api/state.ts`).
 
-- Cloudflare KV is the source of truth for one encrypted JSON blob per tenant.
-- The blob contains current match, archive, deletion tombstones, tournaments and
-  teams. Synchronization is last-write-wins and has no revision precondition.
-- Decrypted domain data is copied to tenant-suffixed `localStorage` keys.
-- The AES-GCM key is non-extractable and memory-only, derived with PBKDF2-SHA256,
-  but the current cost is 210,000 iterations and the UI accepts six-character
-  passphrases.
-- JSON import is partially normalized after unrestricted `JSON.parse`; CSV
-  export does not neutralize formula prefixes.
+## Client storage & crypto
+
+- One encrypted snapshot per `(club, team)` in IndexedDB
+  (`encryptedCache.ts`), AES-256-GCM, key derived with PBKDF2-HMAC-SHA256
+  (600 000 iterations, 128-bit salt), non-extractable, memory only. Passphrase
+  ≥ 12 chars, no maximum.
+- `localStorage` holds only non-sensitive UI state (active scope key, sound
+  toggle) plus legacy keys that are read once by the migration flow.
+- Encryption model rationale: `docs/architecture/ADR-001-encryption-model.md`
+  (Model C hybrid).
 
 ## DFBnet import
 
-- Parsing lives directly under `src/dfbnet.ts` and is invoked from the React UI.
-- The parser splits lines and delimiters without a complete CSV state machine.
-- There is no staged preview/confirmation pipeline, schema contract,
-  fingerprint, import audit record or bounded row/column/file policy.
-- Birth dates and pass numbers are currently introduced by preserved local
-  changes, although the target model explicitly forbids persisting them without
-  a documented purpose.
-- Committed tests contain data that appears to originate from a real youth-team
-  export. It must be replaced and history treated as potentially exposed PII.
+`src/integrations/dfbnet/` — `parser` (RFC-4180 state machine), `schema`
+(whitelist + `DFBNET_LIMITS`), `validator`, `mapper`, `fingerprint`, `provider`
+(`RosterProvider` / `DfbnetCsvProvider`). Import runs client-side into the
+caller's authorized team; the original CSV is never stored or logged. A staged
+server endpoint with a `dfbnet_imports` audit record is not yet built.
+
+## Security headers & error shape
+
+`SECURITY_HEADERS` + a CSP with `script-src 'self'` (no `unsafe-inline`), HSTS,
+COOP/COEP/CORP, `frame-ancestors 'none'`, Permissions-Policy. Errors are
+`{ error: { code, message }, requestId }`; internal detail only via
+`console.error`. Every response carries `X-Request-Id`; every request logs a
+structured line (`requestId`, `userId`, `clubId`, route, status, `durationMs`).
 
 ## Quality baseline
 
-- Unit tests: 32 passing.
-- Worker tests: 11 passing, with warnings for required test secrets.
-- Build: passing.
-- Lint: passing with one warning in preserved local work.
-- Dependency audit: zero known vulnerabilities.
-- Browser tests: 15 passing, one skipped, two failing because preserved lineup
-  work changed `.roster-row` elements to table rows without updating the test.
-- There is no CI workflow, D1 migration suite, Worker-backed browser suite,
-  production readiness gate, backup rehearsal or rollback automation.
+- Unit: 33 · Worker (Miniflare + D1 migrations): 17 · e2e (Playwright): 19 (+1
+  skipped) · build + lint + `npm audit`: clean.
+- CI: `.github/workflows/ci.yml` (quality, e2e, security, CodeQL).
 
-## Required transition
+## Known gaps
 
-KV remains read-only legacy input during migration. D1 becomes authoritative for
-users, clubs, memberships, domain records, sessions and audit events. Every
-club-scoped repository call must receive a server-produced tenant context after
-authentication, active-membership resolution and permission evaluation.
-
+Tracked in `docs/EPIC_STATUS.md` and `docs/PRODUCTION_READINESS.md`: placeholder
+D1 ids, no real-Worker e2e suite, unrehearsed restore/rollback, missing
+export/deletion endpoints, audit coverage gaps, rate limiting limited to login,
+no legacy KV→D1 migration endpoint.
