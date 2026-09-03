@@ -18,7 +18,9 @@
     { "binding": "LEGACY_DATA", "id": "cc85a29c39484d0aaee95baf5e0311d3" }
   ],
   "ratelimits": [
-    { "name": "LOGIN_RATE_LIMITER", "namespace_id": "2026090301", "simple": { "limit": 10, "period": 60 } }
+    { "name": "LOGIN_RATE_LIMITER", "namespace_id": "2026090301", "simple": { "limit": 10, "period": 60 } },
+    { "name": "EXPORT_RATE_LIMITER", "namespace_id": "2026090311", "simple": { "limit": 5, "period": 60 } },
+    { "name": "IMPORT_RATE_LIMITER", "namespace_id": "2026090312", "simple": { "limit": 20, "period": 60 } }
   ],
   "routes": [
     { "pattern": "schiri.squora.de", "custom_domain": true }
@@ -45,7 +47,9 @@
         { "binding": "LEGACY_DATA", "id": "cc85a29c39484d0aaee95baf5e0311d3" }
       ],
       "ratelimits": [
-        { "name": "LOGIN_RATE_LIMITER", "namespace_id": "2026090302", "simple": { "limit": 20, "period": 60 } }
+        { "name": "LOGIN_RATE_LIMITER", "namespace_id": "2026090302", "simple": { "limit": 20, "period": 60 } },
+        { "name": "EXPORT_RATE_LIMITER", "namespace_id": "2026090321", "simple": { "limit": 20, "period": 60 } },
+        { "name": "IMPORT_RATE_LIMITER", "namespace_id": "2026090322", "simple": { "limit": 60, "period": 60 } }
       ]
     },
     "staging": {
@@ -58,7 +62,9 @@
         { "binding": "LEGACY_DATA", "id": "cc85a29c39484d0aaee95baf5e0311d3" }
       ],
       "ratelimits": [
-        { "name": "LOGIN_RATE_LIMITER", "namespace_id": "2026090303", "simple": { "limit": 10, "period": 60 } }
+        { "name": "LOGIN_RATE_LIMITER", "namespace_id": "2026090303", "simple": { "limit": 10, "period": 60 } },
+        { "name": "EXPORT_RATE_LIMITER", "namespace_id": "2026090331", "simple": { "limit": 5, "period": 60 } },
+        { "name": "IMPORT_RATE_LIMITER", "namespace_id": "2026090332", "simple": { "limit": 20, "period": 60 } }
       ],
       "routes": [
         { "pattern": "schiri-staging.squora.de", "custom_domain": true }

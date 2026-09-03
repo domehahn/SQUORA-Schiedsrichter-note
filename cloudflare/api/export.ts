@@ -1,5 +1,6 @@
 import type { AuthContext } from "../auth/session";
 import { json } from "../core/http";
+import { clientIp, enforceRateLimit } from "../core/rate-limit";
 import { requireTenantAccess } from "../middleware/tenant";
 import { writeAudit } from "../services/audit-service";
 
@@ -10,8 +11,9 @@ const SCHEMA_VERSION = 1;
  * net). Requires `club.manage`. Never spans clubs; excludes credentials, session
  * tokens and raw DFBnet CSVs. Private-note ciphertext is included opaquely.
  */
-export async function exportClub(env: Env, auth: AuthContext, clubId: string, requestId: string): Promise<Response> {
+export async function exportClub(request: Request, env: Env, auth: AuthContext, clubId: string, requestId: string): Promise<Response> {
   const context = await requireTenantAccess(env.DB, auth, clubId, "club.manage");
+  await enforceRateLimit(env.EXPORT_RATE_LIMITER, [clientIp(request), auth.userId, context.clubId, "export"]);
   const club = context.clubId;
 
   const [clubRow, teams, players, matches, events, tournaments, members, imports, audit] = await Promise.all([

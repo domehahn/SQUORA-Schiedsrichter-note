@@ -34,9 +34,18 @@ Birth date / pass number, if present, are surfaced for the referee and stored
 file ≤ 2 MB · rows ≤ 5000 · columns ≤ 100 · field ≤ 2000 chars · filename ≤ 255 ·
 parse ≤ 1500 ms. Values are centralised; change them there only.
 
-## Status
+## Server-side staged endpoint
 
-Client pipeline and parser are implemented and unit-tested. The server-side
-staged endpoint `POST /api/v1/clubs/:clubId/dfbnet/imports` with a
-`dfbnet_imports` audit record (`DFBNET_IMPORT_STARTED/COMPLETED/FAILED`) is
-**not yet built** — see `docs/EPIC_STATUS.md` (Epic 10).
+`cloudflare/api/dfbnet.ts`, all under `/api/v1/clubs/:c/teams/:t/dfbnet/imports`:
+
+| Method / path | Permission | Behaviour |
+| --- | --- | --- |
+| `POST .../imports` | `dfbnet.import` | Re-validates the minimized roster, re-strips forbidden fields, computes a team-scoped SHA-256 fingerprint, writes a `dfbnet_imports` row (`previewed`). Body `confirm: true` also applies in one call. Duplicate fingerprint of a completed import → returns it, no new row. |
+| `POST .../imports/:id/confirm` | `dfbnet.import` | Applies a previewed import; the roster is resent and must fingerprint-match (else 422 `PAYLOAD_MISMATCH`). |
+| `GET .../imports` | `dfbnet.read` | Team-scoped history, metadata only. |
+
+Player upsert is idempotent: by `externalId` (`ON CONFLICT`) or by name when
+absent; `version` bumps on change. Audit: `DFBNET_IMPORT_STARTED / _COMPLETED /
+_FAILED`. Rate-limited via `IMPORT_RATE_LIMITER` (20/60s) keyed by
+IP + account + tenant + endpoint. Migration `0014` adds `dfbnet_imports.team_id`.
+Tests: `cloudflare/test/dfbnet.test.ts`.

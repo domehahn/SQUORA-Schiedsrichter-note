@@ -72,7 +72,7 @@ async function routeAuthenticated(request: Request, env: Env, auth: AuthContext,
   }
   const clubExport = path.match(/^\/api\/v1\/clubs\/([^/]+)\/export$/u);
   if (clubExport) {
-    if (request.method === "GET") return exportClub(env, auth, decodeURIComponent(clubExport[1]), requestId);
+    if (request.method === "GET") return exportClub(request, env, auth, decodeURIComponent(clubExport[1]), requestId);
     return methodNotAllowed();
   }
   const teams = path.match(/^\/api\/v1\/clubs\/([^/]+)\/teams$/u);

@@ -1,6 +1,7 @@
 import type { AuthContext } from "../auth/session";
 import { minimize } from "../core/dfbnet";
 import { HttpError, json, readJson, requireSameOrigin } from "../core/http";
+import { clientIp, enforceRateLimit } from "../core/rate-limit";
 import { isId, newId } from "../core/id";
 import { objectValue, stringValue } from "../core/validation";
 import { requireTeamAccess } from "../middleware/tenant";
@@ -100,6 +101,7 @@ async function applyImport(env: Env, auth: AuthContext, clubId: string, teamId: 
 export async function createDfbnetImport(request: Request, env: Env, auth: AuthContext, clubId: string, teamId: string, requestId: string): Promise<Response> {
   requireSameOrigin(request);
   const context = await requireTeamAccess(env.DB, auth, clubId, teamId, "dfbnet.import");
+  await enforceRateLimit(env.IMPORT_RATE_LIMITER, [clientIp(request), auth.userId, context.clubId, "dfbnet.import"]);
   const input = parseRoster(await readJson(request, 4_194_304));
   const print = await fingerprint(context.teamId, input.players);
 
@@ -128,6 +130,7 @@ export async function createDfbnetImport(request: Request, env: Env, auth: AuthC
 export async function confirmDfbnetImport(request: Request, env: Env, auth: AuthContext, clubId: string, teamId: string, importId: string, requestId: string): Promise<Response> {
   requireSameOrigin(request);
   const context = await requireTeamAccess(env.DB, auth, clubId, teamId, "dfbnet.import");
+  await enforceRateLimit(env.IMPORT_RATE_LIMITER, [clientIp(request), auth.userId, context.clubId, "dfbnet.import"]);
   if (!isId(importId)) throw new HttpError(404, "NOT_FOUND", "The requested resource was not found.");
   const row = await env.DB.prepare("SELECT status,fingerprint,record_count AS recordCount FROM dfbnet_imports WHERE club_id=? AND id=? AND team_id=?")
     .bind(context.clubId, importId, context.teamId).first<{ status: string; fingerprint: string; recordCount: number }>();

@@ -32,7 +32,10 @@ export async function login(request: Request, env: Env, requestId: string): Prom
   if (email.length > 254 || password.length > 1024) throw new HttpError(401, "INVALID_CREDENTIALS", "E-mail address or password is invalid.");
   const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
   const limited = await env.LOGIN_RATE_LIMITER.limit({ key: `${ip.slice(0, 64)}:${email || "unknown"}` });
-  if (!limited.success) throw new HttpError(429, "LOGIN_RATE_LIMITED", "Too many login attempts. Please try again later.");
+  if (!limited.success) {
+    await writeAudit(env.DB, { action: "LOGIN_RATE_LIMITED", entityType: "session", metadata: { ip: ip.slice(0, 64) } });
+    throw new HttpError(429, "LOGIN_RATE_LIMITED", "Too many login attempts. Please try again later.");
+  }
 
   const user = await env.DB.prepare("SELECT id,email,display_name AS displayName,password_hash AS passwordHash,status FROM users WHERE email=?")
     .bind(email).first<{ id: string; email: string; displayName: string; passwordHash: string; status: string }>();

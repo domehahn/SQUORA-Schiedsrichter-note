@@ -4,30 +4,30 @@ A release is **READY** only when every item below is GREEN with evidence
 (a passing CI run, a test file, a rehearsal log entry). Any RED item blocks
 production deployment.
 
-Status as of commit `96112ef` — 2026-09-03.
+Status as of commit `74f6df6` — 2026-09-04.
 
 | # | Criterion | State | Evidence / what's missing |
 | --- | --- | --- | --- |
-| 1 | CI green on `main` | 🟢 | `.github/workflows/ci.yml`: quality + e2e + security + CodeQL |
+| 1 | CI green on `main` | 🟢 | `.github/workflows/ci.yml`: quality + e2e + e2e-worker + security + CodeQL |
 | 2 | No secrets in the repo or history | 🟢 | CI secret guard; `docs/security` review; fixtures synthetic |
-| 3 | No real test PII | 🟢 | "Max Testspieler", `0100-0001`, `@example.invalid` throughout |
-| 4 | Tenant-isolation tests as merge gate | 🟢 | `cloudflare/test/{tenant,matches,teams}.test.ts` — foreign club/team/match → 404; run in `test:worker` CI job |
-| 5 | RBAC tested | 🟢 | viewer cannot mutate; team-scoped referee barred from sibling team |
-| 6 | Optimistic locking, no silent last-write-wins | 🟢 | `version` columns + `team_sync_versions`; 409 tests |
-| 7 | D1 migrations tested | 🟡 | `applyD1Migrations` in worker tests covers `0001–0013`; **not yet applied to a real production D1** (placeholder ids in `wrangler.jsonc`) |
-| 8 | Separate dev / staging / production | 🟡 | `wrangler.jsonc` env split done; real databases + secrets not yet provisioned |
+| 3 | No real test PII | 🟢 | "Max Testspieler", `0100-0001`, `@example.invalid` / `@e2e.invalid` throughout |
+| 4 | Tenant-isolation tests as merge gate | 🟢 | `cloudflare/test/{tenant,matches,teams}.test.ts` + `security/bola.test.ts` — foreign club/team/match/export/import → 404; `test:worker` CI job |
+| 5 | RBAC tested | 🟢 | `security/rbac.test.ts`: viewer read-only, referee cannot delete/manage/import/export, only owner deletes club |
+| 6 | Optimistic locking, no silent last-write-wins | 🟢 | `version` columns + `team_sync_versions`; `security/concurrency.test.ts` |
+| 7 | D1 migrations tested + applied | 🟢 | `applyD1Migrations` covers `0001–0014`; applied to real EU D1 (dev/staging/production), 17→18 tables verified |
+| 8 | Separate dev / staging / production | 🟢 | `wrangler.jsonc` env split; three real EU D1 databases; per-env rate-limiter namespaces; `env.development` pins `routes:[]` |
 | 9 | Encrypted local storage; keys memory-only | 🟢 | `encryptedCache.ts`; PBKDF2 600k / AES-256-GCM; no key in `localStorage`/logs |
 | 10 | CSP without `unsafe-inline`, HSTS, frame protection | 🟢 | `core/http.ts` `SECURITY_HEADERS` + CSP |
 | 11 | Service worker never caches `/api/*` `/auth/*` | 🟡 | Vite PWA `NetworkOnly` configured; automated assertion still to add (Epic 30) |
-| 12 | DFBnet import validated / minimized | 🟡 | client parser + limits + whitelist + server strip done; staged server endpoint + `dfbnet_imports` audit not built (Epic 10) |
+| 12 | DFBnet import validated / minimized | 🟢 | client parser + limits + whitelist + server re-minimize + staged endpoint `cloudflare/api/dfbnet.ts` + `dfbnet_imports` audit; `dfbnet.test.ts` |
 | 13 | Structured logs with `requestId`, no PII | 🟢 | `recordRequest`; `X-Request-Id` header |
-| 14 | Audit log for security-relevant actions | 🟡 | CLUB/TEAM/MATCH covered; `LOGIN_*`, `MEMBER_*`, `DFBNET_*`, `EXPORT_*` not emitted (Epic 18) |
+| 14 | Audit log for security-relevant actions | 🟡 | LOGIN_*/LOGOUT, CLUB_CREATED/DELETED, TEAM_CREATED, TEAM_STATE_SYNCED, MATCH_*, DFBNET_IMPORT_*, EXPORT_CREATED, USER_DELETED emitted. MEMBER_* pending the membership API (Epic 13) |
 | 15 | Backup + restore rehearsed against staging | 🔴 | `docs/runbooks/database-restore.md` written; rehearsal not performed |
 | 16 | Rollback rehearsed | 🔴 | `docs/runbooks/rollback.md` written; not exercised |
-| 17 | Data export + deletion flows | 🔴 | `docs/privacy/*` specify them; endpoints not implemented (Epic 22) |
-| 18 | Real-Worker E2E (browser → Worker → D1) | 🔴 | Playwright still runs against Vite with mocked API (Epic 24) |
-| 19 | Dedicated `tests/security/` suite | 🔴 | csrf / session / import / export specs not present (Epic 25) |
-| 20 | Rate limiting beyond login | 🔴 | only `LOGIN_RATE_LIMITER`; import/export/reporting unprotected (Epic 28) |
+| 17 | Data export + deletion flows | 🟢 | `GET /clubs/:id/export`, `DELETE /clubs/:id` (cascade), `DELETE /api/v1/me` (tombstone) + `lifecycle.test.ts` (8 cases) |
+| 18 | Real-Worker E2E (browser → Worker → D1) | 🟢 | `tests/worker/` against `wrangler dev --local` + local D1; CI job `e2e-worker` |
+| 19 | Dedicated security suite | 🟢 | `cloudflare/test/security/{csrf,session,bola,rbac,concurrency,rate-limit}.test.ts` in the `test:worker` gate |
+| 20 | Rate limiting beyond login | 🟢 | `EXPORT_RATE_LIMITER` (5/60s), `IMPORT_RATE_LIMITER` (20/60s); `core/rate-limit.ts` composite IP+account+tenant+endpoint key; `rate-limit.test.ts` |
 | 21 | Legacy KV → D1 migration endpoint (idempotent, auditable) | 🔴 | read-only compat only; no authenticated migration endpoint (Epics 33–34) |
 | 22 | Observability operational (dashboards / alerts) | 🟡 | `wrangler.jsonc` observability on; no alerting wired |
 | 23 | Incident response documented | 🟢 | `docs/runbooks/incident-response.md` |
@@ -36,19 +36,15 @@ Legend: 🟢 done · 🟡 partial · 🔴 not started.
 
 ## Verdict
 
-**NOT READY.** Blocking (🔴): items 15–21. Must-fix-before-launch (🟡):
-items 7, 8, 11, 12, 14.
+**NOT READY.** Blocking (🔴): items 15, 16, 21. Must-fix-before-launch (🟡):
+items 11, 14, 22.
 
 ## Minimum path to READY
 
-1. Provision real D1 databases for staging + production; apply migrations
-   `0001–0013`; fill `wrangler.jsonc` ids (items 7, 8).
-2. Rehearse restore and rollback against staging; record RTO (items 15, 16).
-3. Implement `GET /clubs/:id/export` and club/user deletion with cascade + audit
-   (item 17).
-4. Add the Wrangler/Miniflare Playwright suite and `tests/security/` gate
-   (items 18, 19).
-5. Extend rate limiting to import/export; emit the remaining audit actions
-   (items 20, 14).
-6. Add a service-worker cache assertion; build the staged DFBnet import endpoint
-   (items 11, 12).
+1. Rehearse restore and rollback against staging; record RTO (items 15, 16).
+2. Build the authenticated, idempotent legacy KV→D1 migration endpoint with a
+   `legacyTenantId → club.id` mapping and verification marker (item 21).
+3. Add a service-worker cache assertion (item 11).
+4. Wire at least one alert (error-rate / 5xx spike) to a channel (item 22).
+5. Build the membership API and emit `MEMBER_INVITED/ROLE_CHANGED/REMOVED`
+   (item 14; also unblocks Epics 43–44).

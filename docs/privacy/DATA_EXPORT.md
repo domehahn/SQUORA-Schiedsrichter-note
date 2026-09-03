@@ -33,7 +33,10 @@ ciphertext is included; it is useless without the club passphrase).
 
 ## Status
 
-Specified here; the `GET /api/v1/clubs/:clubId/export` endpoint is **not yet
-implemented** (`docs/PRODUCTION_READINESS.md`). The client-side CSV/PDF export of
-the locally held archive already exists and already applies CSV-injection
-neutralisation.
+`GET /api/v1/clubs/:clubId/export` is implemented (`cloudflare/api/export.ts`):
+requires `club.manage`, returns the structured `club.json` tree with a
+`Content-Disposition` attachment header, writes an `EXPORT_CREATED` audit row and
+is rate-limited (`EXPORT_RATE_LIMITER`, 5/60s). Tests in
+`cloudflare/test/lifecycle.test.ts`. The zipped CSV bundle is not yet produced
+server-side; the client-side CSV/PDF export of the local archive already exists
+and already applies CSV-injection neutralisation.

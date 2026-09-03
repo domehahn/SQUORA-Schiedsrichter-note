@@ -4,6 +4,7 @@ import { isId } from "../core/id";
 import { boundedJson, integerValue, objectValue } from "../core/validation";
 import { minimize } from "../core/dfbnet";
 import { requireTeamAccess } from "../middleware/tenant";
+import { writeAudit } from "../services/audit-service";
 
 function arrayValue(source: Record<string, unknown>, key: string, max: number): unknown[] {
   const value = source[key];
@@ -119,5 +120,9 @@ export async function putState(request: Request, env: Env, auth: AuthContext, cl
     await env.DB.prepare("UPDATE team_sync_versions SET version=? WHERE club_id=? AND team_id=? AND version=?").bind(expectedVersion, club, team, expectedVersion + 1).run();
     throw error;
   }
+  await writeAudit(env.DB, {
+    clubId: club, userId: auth.userId, action: "TEAM_STATE_SYNCED", entityType: "team", entityId: team,
+    metadata: { version: expectedVersion + 1, archive: archive.length, tournaments: tournaments.length, draft: current ? 1 : 0 },
+  });
   return json({ ok: true, version: expectedVersion + 1, updatedAt: now }, requestId);
 }

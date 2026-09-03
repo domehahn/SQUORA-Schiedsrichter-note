@@ -16,26 +16,36 @@ Delete the `memberships` row (or set a non-active status). Access ends on the
 member's next request — membership is re-checked per request, no session flush
 needed. Audit: `MEMBER_REMOVED` (to be emitted, Epic 18).
 
-## Delete a club (request-based, endpoint pending)
+## Delete a club (implemented — immediate hard delete)
 
-Target flow:
+`DELETE /api/v1/clubs/:clubId` (`cloudflare/api/clubs.ts`):
 
-1. `club_owner` requests deletion → `clubs.status='deleting'`, `deletion_due_at`
-   = now + 30 days. Club disappears from `listClubs`; all APIs return 404.
-2. Grace window: the owner can cancel.
-3. After the window a job hard-deletes the club row; `ON DELETE CASCADE` on
-   `memberships`, `teams`, `matches`, `match_events`, `tournaments`,
-   `players`, `dfbnet_imports`, `team_*` removes every child.
-4. `audit_log` rows with that `club_id` are retained (metadata only) for the
-   audit window, then trimmed.
+1. Requires role `club_owner` and `requireSameOrigin`; the body must confirm the
+   exact club name (else 422 `CONFIRMATION_MISMATCH`).
+2. A `CLUB_DELETED` audit row is written first, keeping `clubId` + `name` in
+   `metadata_json` (its own `club_id` column is nulled by the cascade —
+   `audit_log.club_id` FK is `ON DELETE SET NULL`).
+3. `purgeClub()` (`cloudflare/services/club-deletion.ts`) deletes leaf-first
+   across `match_events, matches, tournaments, players, team_drafts,
+   team_rosters, team_sync_versions, teams, dfbnet_imports, memberships`, then
+   the `clubs` row, in one `batch`. Returns per-table row counts.
 
-## Delete a user account (request-based, endpoint pending)
+A 30-day `status='deleting'` grace window is future work (needs a purge job).
+Tests: `cloudflare/test/lifecycle.test.ts`.
 
-1. If the user is the sole `club_owner` of any club, require transfer or club
-   deletion first.
-2. `users.status='deleted'`, e-mail and display name replaced with a tombstone
-   (`deleted-user-<id>`), all sessions revoked, all memberships removed.
-3. `audit_log.user_id` references are retained (id only) for the audit window.
+## Delete a user account (implemented — tombstone)
+
+`DELETE /api/v1/me` (`cloudflare/api/account.ts`), body `{ "confirm": "KONTO LÖSCHEN" }`:
+
+1. Clubs the user solely owns **and** that still have other active members →
+   409 `OWNER_TRANSFER_REQUIRED`; the user must transfer or delete them first.
+2. Clubs the user solely owns with no other members are purged via `purgeClub`
+   (audit `CLUB_DELETED`, reason `owner_account_deleted`).
+3. All memberships removed; `users` row kept as a tombstone
+   (`email = deleted-<id>@deleted.invalid`, `display_name = 'Gelöschtes Konto'`,
+   `status = 'deleted'`); all sessions revoked; session cookie cleared.
+4. `audit_log.user_id` references are retained for the audit window.
+5. Audit `USER_DELETED`.
 
 ## Export before deletion
 
