@@ -4,6 +4,7 @@ import { HttpError, json, readJson, requireSameOrigin } from "../core/http";
 import { newId } from "../core/id";
 import { objectValue, stringValue } from "../core/validation";
 import { requireTenantAccess } from "../middleware/tenant";
+import { purgeClub } from "../services/club-deletion";
 import { writeAudit } from "../services/audit-service";
 
 function randomSalt(): string {
@@ -50,4 +51,24 @@ export async function getClub(env: Env, auth: AuthContext, clubId: string, reque
     .bind(context.clubId).first();
   if (!club) throw new HttpError(404, "NOT_FOUND", "The requested resource was not found.");
   return json({ club: { ...club, role: context.role, permissions: context.permissions } }, requestId);
+}
+
+/**
+ * Hard-deletes a club and every row scoped to it. Only a `club_owner` may do
+ * this and the request body must confirm the exact club name. The audit row is
+ * written before the purge and keeps the club id/name in metadata (its own
+ * `club_id` column is nulled by the cascade).
+ */
+export async function deleteClub(request: Request, env: Env, auth: AuthContext, clubId: string, requestId: string): Promise<Response> {
+  requireSameOrigin(request);
+  const context = await requireTenantAccess(env.DB, auth, clubId, "club.manage");
+  if (context.role !== "club_owner") throw new HttpError(403, "PERMISSION_DENIED", "Only the club owner can delete the club.");
+  const club = await env.DB.prepare("SELECT name FROM clubs WHERE id=?").bind(context.clubId).first<{ name: string }>();
+  if (!club) throw new HttpError(404, "NOT_FOUND", "The requested resource was not found.");
+  const body = objectValue(await readJson(request, 4096));
+  const confirm = stringValue(body, "confirm", { max: 120 });
+  if (confirm !== club.name) throw new HttpError(422, "CONFIRMATION_MISMATCH", "The confirmation does not match the club name.");
+  await writeAudit(env.DB, { clubId: context.clubId, userId: auth.userId, action: "CLUB_DELETED", entityType: "club", entityId: context.clubId, metadata: { clubId: context.clubId, name: club.name } });
+  const counts = await purgeClub(env.DB, context.clubId);
+  return json({ ok: true, deleted: counts }, requestId);
 }

@@ -1,4 +1,6 @@
-import { listClubs, createClub, getClub } from "./api/clubs";
+import { listClubs, createClub, getClub, deleteClub } from "./api/clubs";
+import { deleteAccount } from "./api/account";
+import { exportClub } from "./api/export";
 import { login, logout, me } from "./api/auth";
 import { createMatch, deleteMatch, getMatch, listMatches, updateMatch } from "./api/matches";
 import { getState, putState } from "./api/state";
@@ -48,6 +50,7 @@ function methodNotAllowed(): never {
 
 async function routeAuthenticated(request: Request, env: Env, auth: AuthContext, path: string, requestId: string): Promise<Response> {
   if (path === "/api/v1/me" && request.method === "GET") return me(request, env, requestId);
+  if (path === "/api/v1/me" && request.method === "DELETE") return deleteAccount(request, env, auth, requestId);
   if (path === "/api/v1/auth/logout" && request.method === "POST") return logout(request, env, requestId);
   if (path === "/api/v1/auth/logout-all" && request.method === "POST") return logout(request, env, requestId, true);
   if (path === "/auth/logout" && request.method === "POST") {
@@ -63,6 +66,12 @@ async function routeAuthenticated(request: Request, env: Env, auth: AuthContext,
   const club = path.match(/^\/api\/v1\/clubs\/([^/]+)$/u);
   if (club) {
     if (request.method === "GET") return getClub(env, auth, decodeURIComponent(club[1]), requestId);
+    if (request.method === "DELETE") return deleteClub(request, env, auth, decodeURIComponent(club[1]), requestId);
+    return methodNotAllowed();
+  }
+  const clubExport = path.match(/^\/api\/v1\/clubs\/([^/]+)\/export$/u);
+  if (clubExport) {
+    if (request.method === "GET") return exportClub(env, auth, decodeURIComponent(clubExport[1]), requestId);
     return methodNotAllowed();
   }
   const teams = path.match(/^\/api\/v1\/clubs\/([^/]+)\/teams$/u);
