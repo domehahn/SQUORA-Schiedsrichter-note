@@ -4,14 +4,16 @@ import { EventDialog, type DialogRequest } from "./EventDialog";
 import { MatchReport } from "./MatchReport";
 import { useWakeLock } from "./useWakeLock";
 import { cue, unlockAudio } from "./notify";
+import { TenantGate } from "./TenantGate";
+import { ACTIVE_TENANT_KEY, SOUND_KEY, lsKey } from "./localData";
+import type { TenantMeta } from "./tenant";
 import {
   applyDeletions,
-  fetchRemote,
+  fetchTenantData,
   mergeArchives,
-  pushRemote,
+  pushTenantData,
   sanitizeArchive,
   type CloudData,
-  type RemotePayload,
   type SyncState,
 } from "./sync";
 import {
@@ -60,12 +62,6 @@ import {
 import { createSavedTeam, mergeTeams, sanitizeTeams, type SavedTeam } from "./teams";
 import { seasonStats, statsCsvRows } from "./stats";
 
-const STORAGE_KEY = "squora-referee-note-match-v1";
-const ARCHIVE_KEY = "squora-referee-note-archive-v1";
-const DELETED_KEY = "squora-referee-note-deleted-v1";
-const TOURNAMENTS_KEY = "squora-referee-note-tournaments-v1";
-const TEAMS_KEY = "squora-referee-note-teams-v1";
-const SOUND_KEY = "squora-referee-note-sound-v1";
 const EDITABLE_DURATION_GROUPS = new Set(["F", "G", "custom"]);
 const TIME_RE = /^(\d{1,3}):([0-5]?\d)$/;
 
@@ -89,43 +85,43 @@ function parseTimeText(text: string): number | null {
   return match ? (Number(match[1]) * 60 + Number(match[2])) * 1000 : null;
 }
 
-function loadMatch(): MatchState {
+function loadMatch(tenantId: string): MatchState {
   try {
-    const saved = localStorage.getItem(STORAGE_KEY);
+    const saved = localStorage.getItem(lsKey("match", tenantId));
     return saved ? normalizeMatch(JSON.parse(saved)) : createMatch();
   } catch {
     return createMatch();
   }
 }
 
-function loadArchive(): SavedMatch[] {
+function loadArchive(tenantId: string): SavedMatch[] {
   try {
-    return sanitizeArchive(JSON.parse(localStorage.getItem(ARCHIVE_KEY) ?? "[]"));
+    return sanitizeArchive(JSON.parse(localStorage.getItem(lsKey("archive", tenantId)) ?? "[]"));
   } catch {
     return [];
   }
 }
 
-function loadDeleted(): string[] {
+function loadDeleted(tenantId: string): string[] {
   try {
-    const parsed = JSON.parse(localStorage.getItem(DELETED_KEY) ?? "[]") as unknown;
+    const parsed = JSON.parse(localStorage.getItem(lsKey("deleted", tenantId)) ?? "[]") as unknown;
     return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
   } catch {
     return [];
   }
 }
 
-function loadTournaments(): Tournament[] {
+function loadTournaments(tenantId: string): Tournament[] {
   try {
-    return sanitizeTournaments(JSON.parse(localStorage.getItem(TOURNAMENTS_KEY) ?? "[]"));
+    return sanitizeTournaments(JSON.parse(localStorage.getItem(lsKey("tournaments", tenantId)) ?? "[]"));
   } catch {
     return [];
   }
 }
 
-function loadTeams(): SavedTeam[] {
+function loadTeams(tenantId: string): SavedTeam[] {
   try {
-    return sanitizeTeams(JSON.parse(localStorage.getItem(TEAMS_KEY) ?? "[]"));
+    return sanitizeTeams(JSON.parse(localStorage.getItem(lsKey("teams", tenantId)) ?? "[]"));
   } catch {
     return [];
   }
@@ -152,12 +148,19 @@ interface Notice {
   undo?: MatchState;
 }
 
-function App() {
-  const [match, setMatch] = useState<MatchState>(loadMatch);
-  const [archive, setArchive] = useState<SavedMatch[]>(loadArchive);
-  const [deletedIds, setDeletedIds] = useState<string[]>(loadDeleted);
-  const [tournaments, setTournaments] = useState<Tournament[]>(loadTournaments);
-  const [teams, setTeams] = useState<SavedTeam[]>(loadTeams);
+interface AppProps {
+  tenant: TenantMeta;
+  cryptoKey: CryptoKey;
+  onLock: () => void;
+}
+
+function App({ tenant, cryptoKey, onLock }: AppProps) {
+  const tenantId = tenant.id;
+  const [match, setMatch] = useState<MatchState>(() => loadMatch(tenantId));
+  const [archive, setArchive] = useState<SavedMatch[]>(() => loadArchive(tenantId));
+  const [deletedIds, setDeletedIds] = useState<string[]>(() => loadDeleted(tenantId));
+  const [tournaments, setTournaments] = useState<Tournament[]>(() => loadTournaments(tenantId));
+  const [teams, setTeams] = useState<SavedTeam[]>(() => loadTeams(tenantId));
   const [soundOn, setSoundOn] = useState<boolean>(loadSound);
   const [sessionExpired, setSessionExpired] = useState(false);
   const [syncState, setSyncState] = useState<SyncState>("idle");
@@ -179,17 +182,17 @@ function App() {
 
   useWakeLock(match.runningSince !== null);
 
-  useEffect(() => localStorage.setItem(STORAGE_KEY, JSON.stringify(match)), [match]);
-  useEffect(() => localStorage.setItem(ARCHIVE_KEY, JSON.stringify(archive)), [archive]);
-  useEffect(() => localStorage.setItem(DELETED_KEY, JSON.stringify(deletedIds)), [deletedIds]);
-  useEffect(() => localStorage.setItem(TOURNAMENTS_KEY, JSON.stringify(tournaments)), [tournaments]);
-  useEffect(() => localStorage.setItem(TEAMS_KEY, JSON.stringify(teams)), [teams]);
+  useEffect(() => { try { localStorage.setItem(lsKey("match", tenantId), JSON.stringify(match)); } catch { /* */ } }, [match, tenantId]);
+  useEffect(() => { try { localStorage.setItem(lsKey("archive", tenantId), JSON.stringify(archive)); } catch { /* */ } }, [archive, tenantId]);
+  useEffect(() => { try { localStorage.setItem(lsKey("deleted", tenantId), JSON.stringify(deletedIds)); } catch { /* */ } }, [deletedIds, tenantId]);
+  useEffect(() => { try { localStorage.setItem(lsKey("tournaments", tenantId), JSON.stringify(tournaments)); } catch { /* */ } }, [tournaments, tenantId]);
+  useEffect(() => { try { localStorage.setItem(lsKey("teams", tenantId), JSON.stringify(teams)); } catch { /* */ } }, [teams, tenantId]);
   useEffect(() => { try { localStorage.setItem(SOUND_KEY, soundOn ? "1" : "0"); } catch { /* ignore */ } }, [soundOn]);
 
   useEffect(() => {
     const check = async () => {
       try {
-        const response = await fetch(`${import.meta.env.BASE_URL}api/archive`, { headers: { Accept: "application/json" } });
+        const response = await fetch(`${import.meta.env.BASE_URL}api/tenants`, { headers: { Accept: "application/json" } });
         if (response.status === 401) setSessionExpired(true);
       } catch {
         /* offline – ignore */
@@ -199,7 +202,7 @@ function App() {
     return () => window.clearInterval(id);
   }, []);
 
-  const reconcile = (remote: RemotePayload): CloudData => {
+  const reconcile = (remote: CloudData): CloudData => {
     const mergedDeleted = [...new Set([...latest.current.deletedIds, ...remote.deletedIds])];
     const mergedArchive = applyDeletions(mergeArchives(latest.current.archive, remote.archive), mergedDeleted);
     const mergedTournaments = mergeTournaments(latest.current.tournaments, remote.tournaments);
@@ -220,15 +223,15 @@ function App() {
   useEffect(() => {
     let cancelled = false;
     setSyncState("syncing");
-    fetchRemote().then(async (remote) => {
+    fetchTenantData(tenantId, cryptoKey).then(async (result) => {
       if (cancelled) return;
-      if (!remote) {
-        setSyncState("offline");
+      if (!result.ok) {
+        setSyncState(result.reason === "decrypt" ? "error" : "offline");
         bootstrapped.current = true;
         return;
       }
-      const merged = reconcile(remote);
-      const ok = await pushRemote(merged);
+      const merged = reconcile(result.data);
+      const ok = await pushTenantData(tenantId, cryptoKey, merged);
       if (cancelled) return;
       setSyncState(ok ? "synced" : "offline");
       if (ok) setLastSyncedAt(Date.now());
@@ -244,12 +247,12 @@ function App() {
     if (!bootstrapped.current) return;
     setSyncState("syncing");
     const handle = window.setTimeout(async () => {
-      const ok = await pushRemote({ archive, deletedIds, tournaments, teams, current: match });
+      const ok = await pushTenantData(tenantId, cryptoKey, { archive, deletedIds, tournaments, teams, current: match });
       setSyncState(ok ? "synced" : "error");
       if (ok) setLastSyncedAt(Date.now());
     }, 1500);
     return () => window.clearTimeout(handle);
-  }, [archive, deletedIds, tournaments, teams, match]);
+  }, [archive, deletedIds, tournaments, teams, match, tenantId, cryptoKey]);
 
   const inBreakPhase = match.phase === "halfTime" || match.phase === "extraBreak";
   useEffect(() => {
@@ -623,14 +626,14 @@ function App() {
 
   const syncNow = async () => {
     setSyncState("syncing");
-    const remote = await fetchRemote();
-    if (!remote) {
+    const result = await fetchTenantData(tenantId, cryptoKey);
+    if (!result.ok) {
       setSyncState("error");
-      flash("Synchronisierung fehlgeschlagen");
+      flash(result.reason === "decrypt" ? "Entschlüsselung fehlgeschlagen" : "Synchronisierung fehlgeschlagen");
       return;
     }
-    const merged = reconcile(remote);
-    const ok = await pushRemote(merged);
+    const merged = reconcile(result.data);
+    const ok = await pushTenantData(tenantId, cryptoKey, merged);
     setSyncState(ok ? "synced" : "error");
     if (ok) setLastSyncedAt(Date.now());
     flash(ok ? "Synchronisiert" : "Synchronisierung fehlgeschlagen");
@@ -760,6 +763,9 @@ function App() {
           <span><strong>SQUORA</strong><small>Schiedsrichter Note</small></span>
         </a>
         <div className="topbar-actions">
+          <button className="tenant-chip" onClick={() => { if (syncState === "synced" || window.confirm("Verein sperren? Nicht synchronisierte Änderungen bleiben lokal auf diesem Gerät.")) onLock(); }} title="Verein wechseln / sperren">
+            <Icon name="shield" /> <span>{tenant.name}</span>
+          </button>
           <button className="sound-toggle" aria-pressed={soundOn} title={soundOn ? "Signaltöne aus" : "Signaltöne an"} onClick={() => { unlockAudio(); setSoundOn((value) => !value); }}>
             <Icon name={soundOn ? "sound" : "mute"} />
           </button>
@@ -1008,6 +1014,7 @@ function App() {
             teams={teams}
             onUpdate={(id, patch) => setTeams((list) => list.map((team) => (team.id === id ? { ...team, ...patch, updatedAt: nowIso() } : team)))}
             onDelete={(id) => { if (window.confirm("Team aus der Bibliothek löschen?")) setTeams((list) => list.filter((team) => team.id !== id)); }}
+            onClear={() => { if (window.confirm("Gesamte Team-Bibliothek löschen?")) setTeams([]); }}
             onApply={applyTeamFromLibrary}
             onAdd={() => setTeams((list) => mergeTeams([createSavedTeam("Neues Team")], list))}
           />
@@ -1156,7 +1163,7 @@ function App() {
           />
         </CollapsibleSection>
 
-        <p className="privacy-note no-print">Das laufende Spiel liegt lokal in diesem Browser. Gespeicherte Spiele, Turniere und die Team-Bibliothek werden zusätzlich verschlüsselt über deinen Login bei Cloudflare abgeglichen, damit sie auf allen angemeldeten Geräten verfügbar sind.</p>
+        <p className="privacy-note no-print">Alle Daten dieses Vereins werden mit deiner Passphrase Ende-zu-Ende verschlüsselt und getrennt von anderen Vereinen bei Cloudflare abgeglichen. Ohne die Passphrase sind sie nicht wiederherstellbar. Das aktuell entsperrte Spiel liegt zusätzlich unverschlüsselt in diesem Browser.</p>
       </main>
 
       {dialog && (
@@ -1497,24 +1504,31 @@ function TournamentReport({ tournament, archive }: { tournament: Tournament; arc
   );
 }
 
-function TeamLibraryPanel({ teams, onUpdate, onDelete, onApply, onAdd }: {
+function TeamLibraryPanel({ teams, onUpdate, onDelete, onClear, onApply, onAdd }: {
   teams: SavedTeam[];
   onUpdate: (id: string, patch: Partial<SavedTeam>) => void;
   onDelete: (id: string) => void;
+  onClear: () => void;
   onApply: (side: TeamSide, id: string) => void;
   onAdd: () => void;
 }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   return (
     <div className="tournament-panel">
-      <button className="icon-button" onClick={onAdd}><Icon name="plus" /> Team anlegen</button>
+      <div className="tournament-tools">
+        <button className="icon-button" onClick={onAdd}><Icon name="plus" /> Team anlegen</button>
+        {teams.length > 0 && <button className="icon-button danger" onClick={onClear}><Icon name="trash" /> Bibliothek leeren</button>}
+      </div>
       {teams.length === 0 && <p className="collapsible-hint">Noch keine Teams gespeichert. Lege hier eins an oder speichere ein Team aus „Mannschaftsaufstellungen".</p>}
       {teams.map((team) => (
         <div key={team.id} className={`tournament-card ${expandedId === team.id ? "is-open" : ""}`}>
-          <button className="tournament-head" onClick={() => setExpandedId((current) => (current === team.id ? null : team.id))}>
-            <strong>{team.name || "Unbenanntes Team"}</strong>
-            <span>{team.club ? `${team.club} · ` : ""}{team.roster.length} Spieler</span>
-          </button>
+          <div className="tournament-head-row">
+            <button className="tournament-head" onClick={() => setExpandedId((current) => (current === team.id ? null : team.id))}>
+              <strong>{team.name || "Unbenanntes Team"}</strong>
+              <span>{team.club ? `${team.club} · ` : ""}{team.roster.length} Spieler</span>
+            </button>
+            <button className="mini-icon danger" aria-label={`${team.name || "Team"} löschen`} onClick={() => onDelete(team.id)}><Icon name="trash" /></button>
+          </div>
           {expandedId === team.id && (
             <div className="tournament-body">
               <div className="meta-grid">
@@ -1621,4 +1635,41 @@ function SessionExpiredModal({ baseUrl }: { baseUrl: string }) {
   );
 }
 
-export default App;
+function readActiveTenant(): string | null {
+  try {
+    return localStorage.getItem(ACTIVE_TENANT_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function Root() {
+  const [unlocked, setUnlocked] = useState<{ tenant: TenantMeta; key: CryptoKey } | null>(null);
+
+  if (!unlocked) {
+    return (
+      <TenantGate
+        rememberedId={readActiveTenant()}
+        onUnlock={(tenant, key) => {
+          try {
+            localStorage.setItem(ACTIVE_TENANT_KEY, tenant.id);
+          } catch {
+            /* ignore */
+          }
+          setUnlocked({ tenant, key });
+        }}
+      />
+    );
+  }
+
+  return (
+    <App
+      key={unlocked.tenant.id}
+      tenant={unlocked.tenant}
+      cryptoKey={unlocked.key}
+      onLock={() => setUnlocked(null)}
+    />
+  );
+}
+
+export default Root;

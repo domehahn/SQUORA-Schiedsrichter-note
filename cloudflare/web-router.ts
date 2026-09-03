@@ -1,18 +1,61 @@
 import {
   createSession,
   readCookie,
+  readSession,
   SESSION_COOKIE_NAME,
   SESSION_LIFETIME_SECONDS,
   verifyPassword,
-  verifySession,
 } from "./auth";
 
 const APP_PREFIX = "/schiedsrichter-note";
 const LOGIN_PATH = "/auth/login";
 const LOGOUT_PATH = "/auth/logout";
 const SYNC_PATH = "/api/archive";
+const TENANT_INDEX_PATH = "/api/tenants";
+const TENANT_DATA_PREFIX = "/api/tenant/";
 const MAX_SYNC_BYTES = 8_388_608;
+const MAX_INDEX_BYTES = 262_144;
+const TENANT_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const SESSION_COOKIE_PATH = `${APP_PREFIX}/`;
+
+interface Credential {
+  email: string;
+  hash: string;
+}
+
+/** Resolves the configured login credentials: the primary AUTH_EMAIL account plus any extra accounts in the AUTH_USERS JSON secret. */
+function credentials(env: Env): Credential[] {
+  const list: Credential[] = [];
+  if (env.AUTH_EMAIL && env.AUTH_PASSWORD_HASH) {
+    list.push({ email: env.AUTH_EMAIL.trim().toLowerCase(), hash: env.AUTH_PASSWORD_HASH });
+  }
+  try {
+    const extra: unknown = JSON.parse(env.AUTH_USERS ?? "[]");
+    if (Array.isArray(extra)) {
+      for (const entry of extra) {
+        if (entry && typeof entry === "object" && typeof (entry as Credential).email === "string" && typeof (entry as Credential).hash === "string") {
+          list.push({ email: (entry as Credential).email.trim().toLowerCase(), hash: (entry as Credential).hash });
+        }
+      }
+    }
+  } catch {
+    /* AUTH_USERS not set or invalid – primary account still works */
+  }
+  return list;
+}
+
+/** The email of the logged-in account, if the session cookie is valid AND that account still exists. */
+async function sessionEmail(request: Request, env: Env): Promise<string | null> {
+  const token = readCookie(request, SESSION_COOKIE_NAME);
+  if (!token) return null;
+  const sub = await readSession(token, env.SESSION_SECRET);
+  if (!sub) return null;
+  return credentials(env).some((credential) => credential.email === sub.toLowerCase()) ? sub.toLowerCase() : null;
+}
+
+function kvPrefix(email: string): string {
+  return `note:${email.toLowerCase()}`;
+}
 
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
@@ -168,10 +211,11 @@ async function handleLogin(request: Request, env: Env): Promise<Response> {
   const rateLimit = await env.LOGIN_RATE_LIMITER.limit({ key: email || "unknown" });
   if (!rateLimit.success) return loginResponse("Zu viele Anmeldeversuche. Bitte warte eine Minute.", 429);
 
-  const valid = email === env.AUTH_EMAIL.toLowerCase() && await verifyPassword(password, env.AUTH_PASSWORD_HASH);
-  if (!valid) return loginResponse("E-Mail-Adresse oder Passwort ist ungültig.");
+  const account = credentials(env).find((credential) => credential.email === email);
+  const valid = account ? await verifyPassword(password, account.hash) : false;
+  if (!account || !valid) return loginResponse("E-Mail-Adresse oder Passwort ist ungültig.");
 
-  const token = await createSession(env.AUTH_EMAIL, env.SESSION_SECRET);
+  const token = await createSession(account.email, env.SESSION_SECRET);
   return redirect(`${APP_PREFIX}/`, { "Set-Cookie": sessionCookie(token) });
 }
 
@@ -182,8 +226,8 @@ function jsonResponse(body: unknown, status = 200): Response {
   );
 }
 
-async function handleSync(request: Request, env: Env): Promise<Response> {
-  const key = `note:${env.AUTH_EMAIL.toLowerCase()}`;
+async function handleSync(request: Request, env: Env, email: string): Promise<Response> {
+  const key = kvPrefix(email);
 
   if (request.method === "GET") {
     const stored = await env.DATA.get(key);
@@ -231,9 +275,91 @@ async function handleSync(request: Request, env: Env): Promise<Response> {
   return jsonResponse({ error: "method not allowed" }, 405);
 }
 
-async function isAuthenticated(request: Request, env: Env): Promise<boolean> {
-  const token = readCookie(request, SESSION_COOKIE_NAME);
-  return token ? verifySession(token, env.AUTH_EMAIL, env.SESSION_SECRET) : false;
+async function handleTenantIndex(request: Request, env: Env, email: string): Promise<Response> {
+  const key = `${kvPrefix(email)}:index`;
+
+  if (request.method === "GET") {
+    const stored = await env.DATA.get(key);
+    return withResponseHeaders(
+      new Response(stored ?? '{"updatedAt":null,"tenants":[]}', { headers: { "Content-Type": "application/json; charset=utf-8" } }),
+      true,
+    );
+  }
+
+  if (request.method === "PUT") {
+    if (!isSameOriginPost(request)) return jsonResponse({ error: "forbidden" }, 403);
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return jsonResponse({ error: "invalid json" }, 400);
+    }
+    const tenants = (body as { tenants?: unknown })?.tenants;
+    if (!body || typeof body !== "object" || !Array.isArray(tenants)) return jsonResponse({ error: "invalid shape" }, 422);
+    const cleaned = tenants
+      .filter((entry): entry is Record<string, string> =>
+        Boolean(entry) && typeof entry === "object" &&
+        typeof (entry as Record<string, unknown>).id === "string" && TENANT_ID_RE.test((entry as Record<string, string>).id) &&
+        typeof (entry as Record<string, unknown>).name === "string" &&
+        typeof (entry as Record<string, unknown>).salt === "string" &&
+        typeof (entry as Record<string, unknown>).verifier === "string" &&
+        typeof (entry as Record<string, unknown>).verifierIv === "string")
+      .slice(0, 200)
+      .map((entry) => ({
+        id: entry.id,
+        name: String(entry.name).slice(0, 80),
+        salt: String(entry.salt).slice(0, 64),
+        verifierIv: String(entry.verifierIv).slice(0, 64),
+        verifier: String(entry.verifier).slice(0, 256),
+        createdAt: typeof entry.createdAt === "string" ? entry.createdAt : new Date().toISOString(),
+      }));
+    const record = JSON.stringify({ updatedAt: new Date().toISOString(), tenants: cleaned });
+    if (record.length > MAX_INDEX_BYTES) return jsonResponse({ error: "payload too large" }, 413);
+    await env.DATA.put(key, record);
+    return jsonResponse({ ok: true, tenants: cleaned.length });
+  }
+
+  return jsonResponse({ error: "method not allowed" }, 405);
+}
+
+async function handleTenantData(request: Request, env: Env, email: string, tenantId: string): Promise<Response> {
+  if (!TENANT_ID_RE.test(tenantId)) return jsonResponse({ error: "bad tenant id" }, 400);
+  const key = `${kvPrefix(email)}:t:${tenantId}`;
+
+  if (request.method === "GET") {
+    const stored = await env.DATA.get(key);
+    if (!stored) return jsonResponse({ error: "not found" }, 404);
+    return withResponseHeaders(new Response(stored, { headers: { "Content-Type": "application/json; charset=utf-8" } }), true);
+  }
+
+  if (request.method === "PUT") {
+    if (!isSameOriginPost(request)) return jsonResponse({ error: "forbidden" }, 403);
+    const declaredLength = Number(request.headers.get("Content-Length") ?? "0");
+    if (!Number.isFinite(declaredLength) || declaredLength > MAX_SYNC_BYTES) return jsonResponse({ error: "payload too large" }, 413);
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return jsonResponse({ error: "invalid json" }, 400);
+    }
+    const source = body as { iv?: unknown; ciphertext?: unknown };
+    if (!source || typeof source !== "object" || typeof source.iv !== "string" || typeof source.ciphertext !== "string") {
+      return jsonResponse({ error: "invalid shape" }, 422);
+    }
+    const updatedAt = new Date().toISOString();
+    const record = JSON.stringify({ updatedAt, iv: source.iv, ciphertext: source.ciphertext });
+    if (record.length > MAX_SYNC_BYTES) return jsonResponse({ error: "payload too large" }, 413);
+    await env.DATA.put(key, record);
+    return jsonResponse({ ok: true, updatedAt });
+  }
+
+  if (request.method === "DELETE") {
+    if (!isSameOriginPost(request)) return jsonResponse({ error: "forbidden" }, 403);
+    await env.DATA.delete(key);
+    return jsonResponse({ ok: true });
+  }
+
+  return jsonResponse({ error: "method not allowed" }, 405);
 }
 
 /** PWA plumbing that must load before the login gate: manifest, service worker, icons. Contains no user data. */
@@ -274,11 +400,17 @@ export default {
       return withResponseHeaders(await env.ASSETS.fetch(rewriteRequest(request, relativePath)));
     }
 
-    if (!await isAuthenticated(request, env)) {
-      if (relativePath === SYNC_PATH) return jsonResponse({ error: "unauthorized" }, 401);
+    const isApi = relativePath === SYNC_PATH || relativePath === TENANT_INDEX_PATH || relativePath.startsWith(TENANT_DATA_PREFIX);
+    const email = await sessionEmail(request, env);
+    if (!email) {
+      if (isApi) return jsonResponse({ error: "unauthorized" }, 401);
       return loginResponse();
     }
-    if (relativePath === SYNC_PATH) return handleSync(request, env);
+    if (relativePath === SYNC_PATH) return handleSync(request, env, email);
+    if (relativePath === TENANT_INDEX_PATH) return handleTenantIndex(request, env, email);
+    if (relativePath.startsWith(TENANT_DATA_PREFIX)) {
+      return handleTenantData(request, env, email, decodeURIComponent(relativePath.slice(TENANT_DATA_PREFIX.length)));
+    }
     if (relativePath === LOGIN_PATH || relativePath === LOGOUT_PATH) return redirect(`${APP_PREFIX}/`);
 
     let response = await env.ASSETS.fetch(rewriteRequest(request, relativePath));

@@ -7,6 +7,7 @@ interface __BaseEnv_Env {
 	AUTH_EMAIL: "dominik87hahn@gmail.com";
 	AUTH_PASSWORD_HASH: string;
 	SESSION_SECRET: string;
+	AUTH_USERS?: string;
 }
 declare namespace Cloudflare {
 	interface GlobalProps {

@@ -1,7 +1,18 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+import { openApp, passGate } from "./helpers";
+
+const MATCH_KEY_PREFIX = "squora-referee-note-match-v1:";
+
+function matchKey(page: Page): Promise<string> {
+  return page.evaluate((prefix) => {
+    const key = Object.keys(localStorage).find((entry) => entry.startsWith(prefix));
+    if (!key) throw new Error("no match key in localStorage");
+    return key;
+  }, MATCH_KEY_PREFIX);
+}
 
 test("erfasst eine Zeitstrafe, bearbeitet den Eintrag, speichert und öffnet ihn wieder", async ({ page }) => {
-  await page.goto("/");
+  await openApp(page);
   await page.getByLabel("Name der Heimmannschaft").fill("SV Test");
   await page.locator("select").first().selectOption("custom");
   await page.locator('input[type="number"]').first().fill("1");
@@ -26,12 +37,12 @@ test("erfasst eine Zeitstrafe, bearbeitet den Eintrag, speichert und öffnet ihn
   await page.getByRole("button", { name: "Neues Spiel" }).click();
   await expect(page.getByLabel("Name der Heimmannschaft")).toHaveValue("Heim");
 
-  await page.getByRole("button", { name: "Öffnen" }).click();
+  await page.locator(".archive-table").getByRole("button", { name: "Öffnen" }).click();
   await expect(page.getByLabel("Name der Heimmannschaft")).toHaveValue("SV Test");
 });
 
 test("legt ein Turnier an und pfeift eine Ansetzung an", async ({ page }) => {
-  await page.goto("/");
+  await openApp(page);
   await page.getByRole("button", { name: "Turniere" }).click();
 
   page.once("dialog", (dialog) => dialog.accept("Sommercup"));
@@ -61,7 +72,8 @@ test("legt ein Turnier an und pfeift eine Ansetzung an", async ({ page }) => {
 });
 
 test("spielt ein K.-o.-Spiel bis ins Elfmeterschießen durch", async ({ page }) => {
-  const key = "squora-referee-note-match-v1";
+  await openApp(page);
+  const key = await matchKey(page);
   const forward = async (field: string) => {
     await page.evaluate(([k, f]) => {
       const state = JSON.parse(localStorage.getItem(k)!);
@@ -70,9 +82,9 @@ test("spielt ein K.-o.-Spiel bis ins Elfmeterschießen durch", async ({ page }) 
       localStorage.setItem(k, JSON.stringify(state));
     }, [key, field]);
     await page.reload();
+    await passGate(page);
   };
 
-  await page.goto("/");
   await page.getByText("K.-o.-Spiel", { exact: false }).click();
   await page.locator("select").first().selectOption("custom");
   await page.locator('input[type="number"]').first().fill("1");
@@ -101,10 +113,36 @@ test("spielt ein K.-o.-Spiel bis ins Elfmeterschießen durch", async ({ page }) 
 });
 
 test("erfasst ein Vorkommnis ohne Mannschaftsbezug", async ({ page }) => {
-  await page.goto("/");
+  await openApp(page);
   await page.getByRole("button", { name: "Spiel starten" }).click();
   await page.getByRole("button", { name: "Vorkommnis" }).click();
   await page.locator(".modal textarea").fill("Trinkpause wegen Hitze");
   await page.getByRole("button", { name: "Ereignis speichern" }).click();
   await expect(page.locator(".event-table")).toContainText("Trinkpause wegen Hitze");
+});
+
+test("trennt Vereinsdaten: neuer Verein sieht das Archiv des anderen nicht", async ({ page }) => {
+  await openApp(page); // legt "Testverein" an
+  await page.getByLabel("Name der Heimmannschaft").fill("Verein-A-Team");
+  await page.getByRole("button", { name: "Spiel starten" }).click();
+  await page.locator(".team-actions.home").getByRole("button", { name: "Tor Heim", exact: true }).click();
+  await page.locator(".modal input").first().fill("5");
+  await page.getByRole("button", { name: "Ereignis speichern" }).click();
+  await page.getByRole("button", { name: "Speichern", exact: true }).click();
+  await expect(page.locator(".archive-table")).toContainText("Verein-A-Team");
+
+  // Verein sperren -> Gate -> zweiten Verein anlegen
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: /Testverein/ }).click();
+  await page.getByRole("button", { name: /Weiteren Verein anlegen/ }).click();
+  await page.getByLabel("Vereinsname").fill("Zweiter Verein");
+  const password = page.locator(".tenant-card input[type='password']");
+  await password.nth(0).fill("anderes-geheimnis");
+  await password.nth(1).fill("anderes-geheimnis");
+  await page.getByRole("button", { name: /Verein anlegen/ }).click();
+
+  await expect(page.locator("#setup-title")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Zweiter Verein/ })).toBeVisible();
+  await expect(page.locator(".archive-table")).toHaveCount(0);
+  await expect(page.getByText("Noch keine gespeicherten Spiele")).toBeVisible();
 });

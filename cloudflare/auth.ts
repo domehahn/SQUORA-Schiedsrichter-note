@@ -79,23 +79,29 @@ export async function createSession(email: string, secret: string, nowSeconds = 
   return `${encodedPayload}.${toBase64Url(new Uint8Array(signature))}`;
 }
 
-export async function verifySession(token: string, email: string, secret: string, nowSeconds = Math.floor(Date.now() / 1000)): Promise<boolean> {
-  if (token.length > 2048) return false;
+/** Returns the session subject (email) for a valid, unexpired, correctly signed token, otherwise null. */
+export async function readSession(token: string, secret: string, nowSeconds = Math.floor(Date.now() / 1000)): Promise<string | null> {
+  if (token.length > 2048) return null;
   const [encodedPayload, encodedSignature, extra] = token.split(".");
-  if (!encodedPayload || !encodedSignature || extra !== undefined) return false;
+  if (!encodedPayload || !encodedSignature || extra !== undefined) return null;
   const payloadBytes = fromBase64Url(encodedPayload);
   const signature = fromBase64Url(encodedSignature);
-  if (!payloadBytes || !signature || signature.length !== 32) return false;
+  if (!payloadBytes || !signature || signature.length !== 32) return null;
 
   const validSignature = await crypto.subtle.verify("HMAC", await importHmacKey(secret), signature, encoder.encode(encodedPayload));
-  if (!validSignature) return false;
+  if (!validSignature) return null;
 
   try {
     const payload: unknown = JSON.parse(new TextDecoder().decode(payloadBytes));
-    return isSessionPayload(payload) && payload.sub === email && payload.iat <= nowSeconds && payload.exp > nowSeconds;
+    if (isSessionPayload(payload) && payload.iat <= nowSeconds && payload.exp > nowSeconds) return payload.sub;
+    return null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+export async function verifySession(token: string, email: string, secret: string, nowSeconds = Math.floor(Date.now() / 1000)): Promise<boolean> {
+  return (await readSession(token, secret, nowSeconds)) === email;
 }
 
 export function readCookie(request: Request, name: string): string | null {

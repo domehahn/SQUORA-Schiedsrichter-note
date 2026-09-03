@@ -1,9 +1,18 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+import { openApp, passGate } from "./helpers";
 
-const storageKey = "squora-referee-note-match-v1";
+const MATCH_KEY_PREFIX = "squora-referee-note-match-v1:";
+
+function matchKey(page: Page): Promise<string> {
+  return page.evaluate((prefix) => {
+    const key = Object.keys(localStorage).find((entry) => entry.startsWith(prefix));
+    if (!key) throw new Error("no match key in localStorage");
+    return key;
+  }, MATCH_KEY_PREFIX);
+}
 
 test("erlaubt eigene Halbzeitlängen für F- und G-Jugend", async ({ page }) => {
-  await page.goto("/");
+  await openApp(page);
   const ageGroup = page.locator("select");
   const duration = page.locator('input[type="number"]');
 
@@ -23,7 +32,7 @@ test("erlaubt eigene Halbzeitlängen für F- und G-Jugend", async ({ page }) => 
 });
 
 test("führt ein Jugendspiel mit Tor, Wechsel, Karten und Spielende", async ({ page }) => {
-  await page.goto("/");
+  await openApp(page);
   await page.getByLabel("Name der Heimmannschaft").fill("SV Blau");
   await page.getByLabel("Name der Gastmannschaft").fill("FC Grün");
   await page.locator("select").selectOption("custom");
@@ -40,35 +49,38 @@ test("führt ein Jugendspiel mit Tor, Wechsel, Karten und Spielende", async ({ p
   await page.locator(".modal input").first().fill("7");
   await page.getByRole("button", { name: "Ereignis speichern" }).click();
 
-  await page.evaluate((key) => {
-    const state = JSON.parse(localStorage.getItem(key)!);
+  const key = await matchKey(page);
+  await page.evaluate((k) => {
+    const state = JSON.parse(localStorage.getItem(k)!);
     state.firstHalfMs = 60_500;
     state.runningSince = null;
-    localStorage.setItem(key, JSON.stringify(state));
-  }, storageKey);
+    localStorage.setItem(k, JSON.stringify(state));
+  }, key);
   await page.reload();
+  await passGate(page);
   await expect(page.getByText(/Nachspielzeit/).first()).toBeVisible();
   await page.getByRole("button", { name: "Halbzeit", exact: true }).click();
   await page.getByRole("button", { name: "2. Halbzeit starten" }).click();
 
-  await page.locator(".team-actions.home").getByRole("button", { name: /Wechsel/ }).click();
+  await page.locator(".team-actions.home").getByRole("button", { name: "Wechsel Heim", exact: true }).click();
   await page.locator(".modal input").nth(0).fill("8");
   await page.locator(".modal input").nth(1).fill("14");
   await page.getByRole("button", { name: "Ereignis speichern" }).click();
   await expect(page.getByText("Wechsel SV Blau · Nr. 8 raus, Nr. 14 rein", { exact: true })).toBeVisible();
 
-  await page.evaluate((key) => {
-    const state = JSON.parse(localStorage.getItem(key)!);
+  await page.evaluate((k) => {
+    const state = JSON.parse(localStorage.getItem(k)!);
     state.secondHalfMs = 60_250;
     state.runningSince = null;
-    localStorage.setItem(key, JSON.stringify(state));
-  }, storageKey);
+    localStorage.setItem(k, JSON.stringify(state));
+  }, key);
   await page.reload();
+  await passGate(page);
   await page.getByRole("button", { name: "Spielende", exact: true }).click();
   await expect(page.getByText("Beendet", { exact: true })).toBeVisible();
-  await expect(page.getByText("Spielende", { exact: true }).last()).toBeVisible();
+  await expect(page.locator(".event-table").getByText("Spielende", { exact: true })).toBeVisible();
 
-  const stored = await page.evaluate((key) => JSON.parse(localStorage.getItem(key)!), storageKey);
+  const stored = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)!), key);
   expect(stored.events.some((event: { kind: string; player?: string }) => event.kind === "goal" && event.player === "2")).toBeTruthy();
   expect(stored.phase).toBe("finished");
 });
@@ -76,12 +88,12 @@ test("führt ein Jugendspiel mit Tor, Wechsel, Karten und Spielende", async ({ p
 test("bleibt auf schmalen Smartphones vollständig bedienbar", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile-chromium");
   await page.setViewportSize({ width: 320, height: 568 });
-  await page.goto("/");
+  await openApp(page);
 
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.getByRole("button", { name: "CSV" }).scrollIntoViewIfNeeded();
   await expect(page.getByRole("button", { name: "CSV" })).toBeInViewport();
-  await expect(page.getByRole("button", { name: "Drucken" })).toBeInViewport();
+  await expect(page.getByRole("button", { name: "Drucken", exact: true })).toBeInViewport();
 
   await page.getByRole("button", { name: "Spiel starten" }).click();
   const actionButtons = page.locator(".action-buttons button");
@@ -89,7 +101,7 @@ test("bleibt auf schmalen Smartphones vollständig bedienbar", async ({ page }, 
     expect((await actionButtons.nth(index).boundingBox())?.height).toBeGreaterThanOrEqual(44);
   }
 
-  await page.locator(".team-actions.home").getByRole("button", { name: /Tor/ }).click();
+  await page.locator(".team-actions.home").getByRole("button", { name: "Tor Heim", exact: true }).click();
   await expect(page.getByRole("dialog")).toBeInViewport();
   await expect(page.getByRole("button", { name: "Dialog schließen" })).toBeInViewport();
   await expect(page.getByRole("button", { name: "Ereignis speichern" })).toBeInViewport();
