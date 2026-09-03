@@ -64,6 +64,7 @@ import {
 import { createSavedTeam, mergeTeams, type SavedTeam } from "./teams";
 import { parseDfbnetRoster } from "./dfbnet";
 import { seasonStats, statsCsvRows } from "./stats";
+import { toCsv } from "./csv";
 
 const EDITABLE_DURATION_GROUPS = new Set(["F", "G", "custom"]);
 const TIME_RE = /^(\d{1,3}):([0-5]?\d)$/;
@@ -1162,8 +1163,7 @@ function App({ tenant, cryptoKey, onLock }: AppProps) {
             onRange={(patch) => setStatsRange((current) => ({ ...current, ...patch }))}
             onExport={() => {
               const rows = statsCsvRows(archive, statsRange.from, statsRange.to);
-              const csv = rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(";")).join("\r\n");
-              downloadBlob(`squora-statistik-${statsRange.from}_${statsRange.to}.csv`, new Blob(["﻿", csv], { type: "text/csv;charset=utf-8" }));
+              downloadBlob(`squora-statistik-${statsRange.from}_${statsRange.to}.csv`, new Blob([toCsv(rows)], { type: "text/csv;charset=utf-8" }));
             }}
           />
         </CollapsibleSection>
@@ -1204,9 +1204,8 @@ function App({ tenant, cryptoKey, onLock }: AppProps) {
         event.durationMin ? String(event.durationMin) : "",
       ]),
     ];
-    const csv = rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(";")).join("\r\n");
     downloadBlob(`spielbericht-${match.homeTeam}-${match.awayTeam}.csv`.replace(/[^a-z0-9äöüß.-]+/gi, "-").toLowerCase(),
-      new Blob(["﻿", csv], { type: "text/csv;charset=utf-8" }));
+      new Blob([toCsv(rows)], { type: "text/csv;charset=utf-8" }));
   }
 }
 
