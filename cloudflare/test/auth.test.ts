@@ -1,22 +1,45 @@
-import { describe, expect, it } from "vitest";
-import { createSession, verifyPassword, verifySession } from "../auth";
+import { env, SELF } from "cloudflare:test";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { sha256 } from "../auth/session";
+import { ORIGIN, USER_A, migrate, resetDb, seedUser } from "./helpers";
 
-const TEST_HASH = "pbkdf2-sha256$100000$01010101010101010101010101010101$0a5cea6a96077c89c2e719a6adaac8df9216e53b118ff99290c775c8c7346382";
-const EMAIL = "user@example.com";
-const SECRET = "unit-test-session-secret-with-at-least-32-bytes";
+describe("D1 authentication and revocable sessions", () => {
+  beforeAll(migrate);
+  beforeEach(resetDb);
 
-describe("Worker-Authentifizierung", () => {
-  it("prüft den PBKDF2-Passwort-Hash timing-sicher", async () => {
-    await expect(verifyPassword("test-password", TEST_HASH)).resolves.toBe(true);
-    await expect(verifyPassword("wrong-password", TEST_HASH)).resolves.toBe(false);
-    await expect(verifyPassword("test-password", "invalid-hash")).resolves.toBe(false);
+  it("stores only a hash of a random session token and revokes it on logout", async () => {
+    await seedUser(USER_A, "user-a@example.invalid");
+    const login = await SELF.fetch(`${ORIGIN}/api/v1/auth/login`, { method: "POST", headers: { Origin: ORIGIN, "Content-Type": "application/json" }, body: JSON.stringify({ email: "user-a@example.invalid", password: "test-password" }) });
+    expect(login.status).toBe(200);
+    const setCookie = login.headers.get("Set-Cookie")!;
+    expect(setCookie).toContain("HttpOnly");
+    expect(setCookie).toContain("Secure");
+    expect(setCookie).toContain("SameSite=Strict");
+    const token = setCookie.match(/squora_session=([^;]+)/)![1];
+    const stored = await env.DB.prepare("SELECT id_hash AS idHash FROM sessions").first<{ idHash: string }>();
+    expect(stored?.idHash).toBe(await sha256(token));
+    expect(stored?.idHash).not.toContain(token);
+    const cookie = `squora_session=${token}`;
+    expect((await SELF.fetch(`${ORIGIN}/api/v1/me`, { headers: { Cookie: cookie } })).status).toBe(200);
+    expect((await SELF.fetch(`${ORIGIN}/api/v1/auth/logout`, { method: "POST", headers: { Cookie: cookie, Origin: ORIGIN } })).status).toBe(200);
+    expect((await SELF.fetch(`${ORIGIN}/api/v1/me`, { headers: { Cookie: cookie } })).status).toBe(401);
   });
 
-  it("akzeptiert nur unveränderte, gültige Sessions für den richtigen Benutzer", async () => {
-    const token = await createSession(EMAIL, SECRET, 1_000);
-    await expect(verifySession(token, EMAIL, SECRET, 1_001)).resolves.toBe(true);
-    await expect(verifySession(`${token}x`, EMAIL, SECRET, 1_001)).resolves.toBe(false);
-    await expect(verifySession(token, "other@example.com", SECRET, 1_001)).resolves.toBe(false);
-    await expect(verifySession(token, EMAIL, SECRET, 1_000 + 8 * 60 * 60)).resolves.toBe(false);
+  it("rejects invalid credentials generically and rejects cross-origin login", async () => {
+    await seedUser(USER_A, "user-a@example.invalid");
+    const invalid = await SELF.fetch(`${ORIGIN}/api/v1/auth/login`, { method: "POST", headers: { Origin: ORIGIN, "Content-Type": "application/json" }, body: JSON.stringify({ email: "user-a@example.invalid", password: "wrong" }) });
+    expect(invalid.status).toBe(401);
+    expect(await invalid.text()).not.toContain("user-a@example.invalid");
+    const csrf = await SELF.fetch(`${ORIGIN}/api/v1/auth/login`, { method: "POST", headers: { Origin: "https://evil.invalid", "Content-Type": "application/json" }, body: "{}" });
+    expect(csrf.status).toBe(403);
+  });
+
+  it("invalidates an existing session immediately when the user is disabled", async () => {
+    await seedUser(USER_A, "user-a@example.invalid");
+    const login = await SELF.fetch(`${ORIGIN}/api/v1/auth/login`, { method: "POST", headers: { Origin: ORIGIN, "Content-Type": "application/json" }, body: JSON.stringify({ email: "user-a@example.invalid", password: "test-password" }) });
+    const cookie = login.headers.get("Set-Cookie")!;
+    await env.DB.prepare("UPDATE users SET status='disabled' WHERE id=?").bind(USER_A).run();
+    expect((await SELF.fetch(`${ORIGIN}/api/v1/me`, { headers: { Cookie: cookie } })).status).toBe(401);
   });
 });
+
