@@ -147,7 +147,7 @@ test("importiert einen Kader aus einer DFBnet-CSV", async ({ page }) => {
   await expect(rows.nth(1).locator(".roster-name")).toHaveValue("Anna Beispiel");
 
   // aufstellen: einen Spieler auf "Aufgestellt" setzen
-  await rows.nth(0).locator(".roster-status").selectOption("start");
+  await rows.nth(0).locator(".status-seg.seg-start").click();
   await expect(home.locator(".roster-group.group-start .roster-table tbody tr")).toHaveCount(1);
 });
 
@@ -161,7 +161,7 @@ test("wählt im Erfassungsdialog einen Spieler aus der Aufstellung", async ({ pa
     mimeType: "text/csv",
     buffer: Buffer.from("Name Künstlername;Vorname Rufname;Geb.\nMeier ;Anna (w) ;01.01.2015\nKern ;Ben (m) ;02.02.2015", "utf-8"),
   });
-  await home.locator(".roster-group.group-out .roster-table tbody tr").first().locator(".roster-status").selectOption("start");
+  await home.locator(".roster-group.group-out .roster-table tbody tr").first().locator(".status-seg.seg-start").click();
   await page.getByRole("button", { name: "Mannschaftsaufstellungen" }).click();
 
   await page.getByRole("button", { name: "Spiel starten" }).click();

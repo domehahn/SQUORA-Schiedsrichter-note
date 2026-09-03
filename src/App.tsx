@@ -1352,10 +1352,10 @@ function MetaPanel({ meta, onChange }: { meta: MatchMeta; onChange: (patch: Part
   );
 }
 
-const LINEUP_GROUPS: { key: LineupStatus; label: string }[] = [
-  { key: "start", label: "Aufgestellt" },
-  { key: "bench", label: "Bank" },
-  { key: "out", label: "Nicht nominiert" },
+const LINEUP_GROUPS: { key: LineupStatus; label: string; short: string }[] = [
+  { key: "start", label: "Aufgestellt", short: "Start" },
+  { key: "bench", label: "Bank", short: "Bank" },
+  { key: "out", label: "Nicht nominiert", short: "Nicht" },
 ];
 
 function RosterEditor({ teamLabel, roster, onChange, onImportCsv, grouped = false }: {
@@ -1372,11 +1372,23 @@ function RosterEditor({ teamLabel, roster, onChange, onImportCsv, grouped = fals
     <tr key={player.id}>
       {grouped && (
         <td>
-          <select className="roster-status" value={player.status ?? "out"} onChange={(event) => update(player.id, { status: event.target.value as LineupStatus })}>
-            <option value="start">Aufgestellt</option>
-            <option value="bench">Bank</option>
-            <option value="out">Nicht nominiert</option>
-          </select>
+          <div className="status-chip" role="group" aria-label="Aufstellungsstatus">
+            {LINEUP_GROUPS.map((group) => {
+              const active = (player.status ?? "out") === group.key;
+              return (
+                <button
+                  key={group.key}
+                  type="button"
+                  className={`status-seg seg-${group.key} ${active ? "active" : ""}`}
+                  aria-pressed={active}
+                  title={group.label}
+                  onClick={() => update(player.id, { status: group.key })}
+                >
+                  {group.short}
+                </button>
+              );
+            })}
+          </div>
         </td>
       )}
       <td><input className="roster-num" inputMode="numeric" maxLength={4} placeholder="–" value={player.number} onChange={(event) => update(player.id, { number: event.target.value })} /></td>

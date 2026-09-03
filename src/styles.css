@@ -217,8 +217,15 @@ input:disabled, select:disabled { color: #6a7687; background: #f4f6f9; }
 .roster-table td:has(.roster-name) { width: auto; min-width: 130px; }
 .roster-table .roster-pass { width: 92px; }
 .roster-table .roster-birth { width: 104px; }
-.roster-table td:has(.roster-status) { width: 148px; }
-.roster-table .roster-status { padding-right: 4px; }
+.roster-table td:has(.status-chip) { width: 168px; }
+.status-chip { display: inline-flex; border: 1px solid #d7dfe9; border-radius: 999px; overflow: hidden; background: #fff; }
+.status-seg { border: 0; background: transparent; padding: 6px 9px; min-height: 32px; font-size: 10px; font-weight: 800; color: #8391a3; cursor: pointer; white-space: nowrap; }
+.status-seg + .status-seg { border-left: 1px solid #e6ebf2; }
+.status-seg:hover { background: #f2f6fb; color: #4b5a72; }
+.status-seg.active { color: #fff; }
+.status-seg.seg-start.active { background: #1a9c55; }
+.status-seg.seg-bench.active { background: #2670c4; }
+.status-seg.seg-out.active { background: #8a94a6; }
 .roster-table .mini-icon { margin: 0; }
 
 .roster-group { margin-bottom: 12px; }

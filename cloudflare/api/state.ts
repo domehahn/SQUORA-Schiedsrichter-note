@@ -1,0 +1,140 @@
+import type { AuthContext } from "../auth/session";
+import { HttpError, json, readJson, requireSameOrigin } from "../core/http";
+import { isId } from "../core/id";
+import { boundedJson, integerValue, objectValue } from "../core/validation";
+import { requireTenantAccess } from "../middleware/tenant";
+
+const FORBIDDEN_DFBNET_FIELDS = new Set(["birthdate", "birth_date", "geburtsdatum", "pass", "passnumber", "passnummer", "nationality", "nationalität", "eligibility", "spielrecht", "registrationdate"]);
+
+function minimize(value: unknown, depth = 0): unknown {
+  if (depth > 20) throw new HttpError(422, "VALIDATION_FAILED", "The request data is invalid.");
+  if (Array.isArray(value)) return value.map((entry) => minimize(entry, depth + 1));
+  if (!value || typeof value !== "object") return value;
+  const result: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (!FORBIDDEN_DFBNET_FIELDS.has(key.toLowerCase())) result[key] = minimize(child, depth + 1);
+  }
+  return result;
+}
+
+function arrayValue(source: Record<string, unknown>, key: string, max: number): unknown[] {
+  const value = source[key];
+  if (!Array.isArray(value) || value.length > max) throw new HttpError(422, "VALIDATION_FAILED", "The request data is invalid.");
+  return value;
+}
+
+function domainId(source: Record<string, unknown>): string {
+  if (typeof source.id !== "string" || !isId(source.id)) throw new HttpError(422, "VALIDATION_FAILED", "The request data is invalid.");
+  return source.id;
+}
+
+function matchStatus(phase: unknown): "setup" | "live" | "finished" | "abandoned" {
+  if (phase === "finished") return "finished";
+  if (phase === "abandoned") return "abandoned";
+  if (phase === "setup") return "setup";
+  return "live";
+}
+
+export async function getState(env: Env, auth: AuthContext, clubId: string, requestId: string): Promise<Response> {
+  const context = await requireTenantAccess(env.DB, auth, clubId, "matches.read");
+  const now = new Date().toISOString();
+  await env.DB.prepare("INSERT OR IGNORE INTO club_sync_versions (club_id,version,updated_at) VALUES (?,0,?)").bind(context.clubId, now).run();
+  const [version, matches, events, teams, tournaments, draft] = await Promise.all([
+    env.DB.prepare("SELECT version,updated_at AS updatedAt FROM club_sync_versions WHERE club_id=?").bind(context.clubId).first<{ version: number; updatedAt: string }>(),
+    env.DB.prepare("SELECT id,payload_json AS payloadJson,saved_at AS savedAt FROM matches WHERE club_id=? AND deleted_at IS NULL ORDER BY saved_at DESC,id").bind(context.clubId).all<{ id: string; payloadJson: string; savedAt: string | null }>(),
+    env.DB.prepare("SELECT match_id AS matchId,payload_json AS payloadJson FROM match_events WHERE club_id=? ORDER BY match_ms,id").bind(context.clubId).all<{ matchId: string; payloadJson: string }>(),
+    env.DB.prepare("SELECT payload_json AS payloadJson FROM teams WHERE club_id=? ORDER BY name,id").bind(context.clubId).all<{ payloadJson: string }>(),
+    env.DB.prepare("SELECT payload_json AS payloadJson FROM tournaments WHERE club_id=? AND deleted_at IS NULL ORDER BY tournament_date DESC,id").bind(context.clubId).all<{ payloadJson: string }>(),
+    env.DB.prepare("SELECT payload_json AS payloadJson FROM club_drafts WHERE club_id=?").bind(context.clubId).first<{ payloadJson: string }>(),
+  ]);
+  const byMatch = new Map<string, unknown[]>();
+  for (const event of events.results) {
+    const list = byMatch.get(event.matchId) ?? [];
+    list.push(JSON.parse(event.payloadJson));
+    byMatch.set(event.matchId, list);
+  }
+  const archive = matches.results.map((row) => ({ savedAt: row.savedAt, state: { ...JSON.parse(row.payloadJson), events: byMatch.get(row.id) ?? [] } }));
+  return json({ version: version?.version ?? 0, updatedAt: version?.updatedAt ?? null, archive, deletedIds: [], teams: teams.results.map((row) => JSON.parse(row.payloadJson)), tournaments: tournaments.results.map((row) => JSON.parse(row.payloadJson)), current: draft ? JSON.parse(draft.payloadJson) : null }, requestId);
+}
+
+export async function putState(request: Request, env: Env, auth: AuthContext, clubId: string, requestId: string): Promise<Response> {
+  requireSameOrigin(request);
+  const context = await requireTenantAccess(env.DB, auth, clubId, "matches.update");
+  const source = objectValue(await readJson(request, 4_194_304));
+  const expectedVersion = integerValue(source, "version", { min: 0, max: 2_147_483_647 });
+  const archive = arrayValue(source, "archive", 2000);
+  const teams = arrayValue(source, "teams", 500);
+  const tournaments = arrayValue(source, "tournaments", 500);
+  const current = source.current === null || source.current === undefined ? null : objectValue(source.current);
+  const now = new Date().toISOString();
+  await env.DB.prepare("INSERT OR IGNORE INTO club_sync_versions (club_id,version,updated_at) VALUES (?,0,?)").bind(context.clubId, now).run();
+  const locked = await env.DB.prepare("UPDATE club_sync_versions SET version=version+1,updated_at=? WHERE club_id=? AND version=?").bind(now, context.clubId, expectedVersion).run();
+  if (locked.meta.changes !== 1) throw new HttpError(409, "VERSION_CONFLICT", "The club data was changed by another client.");
+
+  const statements: D1PreparedStatement[] = [
+    env.DB.prepare("DELETE FROM match_events WHERE club_id=?").bind(context.clubId),
+    env.DB.prepare("DELETE FROM matches WHERE club_id=?").bind(context.clubId),
+    env.DB.prepare("DELETE FROM players WHERE club_id=?").bind(context.clubId),
+    env.DB.prepare("DELETE FROM teams WHERE club_id=?").bind(context.clubId),
+    env.DB.prepare("DELETE FROM tournaments WHERE club_id=?").bind(context.clubId),
+    env.DB.prepare("DELETE FROM club_drafts WHERE club_id=?").bind(context.clubId),
+  ];
+
+  for (const raw of teams) {
+    const team = objectValue(minimize(raw));
+    const id = domainId(team);
+    const name = typeof team.name === "string" ? team.name.trim().slice(0, 120) : "";
+    if (!name) throw new HttpError(422, "VALIDATION_FAILED", "The request data is invalid.");
+    statements.push(env.DB.prepare("INSERT INTO teams (club_id,id,name,age_group,payload_json,version,created_at,updated_at) VALUES (?,?,?,?,?,1,?,?)")
+      .bind(context.clubId, id, name, typeof team.ageGroup === "string" ? team.ageGroup.slice(0, 40) : null, boundedJson(team, 256_000), now, now));
+    const roster = Array.isArray(team.roster) ? team.roster.slice(0, 500) : [];
+    for (const rawPlayer of roster) {
+      const player = objectValue(minimize(rawPlayer));
+      const playerId = domainId(player);
+      const playerName = typeof player.name === "string" ? player.name.trim().slice(0, 120) : "";
+      if (!playerName) continue;
+      statements.push(env.DB.prepare("INSERT INTO players (club_id,id,team_id,name,shirt_number,version,created_at,updated_at) VALUES (?,?,?,?,?,1,?,?)")
+        .bind(context.clubId, playerId, id, playerName, typeof player.number === "string" ? player.number.slice(0, 8) : null, now, now));
+    }
+  }
+
+  for (const raw of tournaments) {
+    const tournament = objectValue(minimize(raw));
+    const id = domainId(tournament);
+    const name = typeof tournament.name === "string" ? tournament.name.trim().slice(0, 160) : "";
+    if (!name) throw new HttpError(422, "VALIDATION_FAILED", "The request data is invalid.");
+    statements.push(env.DB.prepare("INSERT INTO tournaments (club_id,id,name,tournament_date,payload_json,version,created_at,updated_at) VALUES (?,?,?,?,?,1,?,?)")
+      .bind(context.clubId, id, name, typeof tournament.date === "string" ? tournament.date.slice(0, 40) : null, boundedJson(tournament, 512_000), now, now));
+  }
+
+  for (const raw of archive) {
+    const saved = objectValue(minimize(raw));
+    const state = objectValue(saved.state);
+    const id = domainId(state);
+    const rawEvents = Array.isArray(state.events) ? state.events.slice(0, 1000) : [];
+    const withoutEvents = { ...state, events: undefined };
+    const meta = state.meta && typeof state.meta === "object" ? state.meta as Record<string, unknown> : {};
+    statements.push(env.DB.prepare(`INSERT INTO matches (club_id,id,match_date,competition,venue,state,payload_json,saved_at,version,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,1,?,?)`).bind(context.clubId, id, typeof state.matchDate === "string" ? state.matchDate.slice(0, 40) : now.slice(0, 10), typeof meta.competition === "string" ? meta.competition.slice(0, 160) : "", typeof meta.venue === "string" ? meta.venue.slice(0, 200) : "", matchStatus(state.phase), boundedJson(withoutEvents, 512_000), typeof saved.savedAt === "string" ? saved.savedAt : now, now, now));
+    for (const rawEvent of rawEvents) {
+      const event = objectValue(minimize(rawEvent));
+      const eventId = domainId(event);
+      const matchMs = Number.isInteger(event.matchMs) ? Math.max(0, Math.min(event.matchMs as number, 60_000_000)) : 0;
+      statements.push(env.DB.prepare("INSERT INTO match_events (club_id,id,match_id,event_type,match_ms,payload_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)")
+        .bind(context.clubId, eventId, id, typeof event.kind === "string" ? event.kind.slice(0, 40) : "unknown", matchMs, boundedJson(event, 32_768), now, now));
+    }
+  }
+  if (current) {
+    const minimized = objectValue(minimize(current));
+    statements.push(env.DB.prepare("INSERT INTO club_drafts (club_id,match_id,payload_json,updated_at) VALUES (?,?,?,?)")
+      .bind(context.clubId, domainId(minimized), boundedJson(minimized, 1_048_576), now));
+  }
+  try {
+    await env.DB.batch(statements);
+  } catch (error) {
+    await env.DB.prepare("UPDATE club_sync_versions SET version=? WHERE club_id=? AND version=?").bind(expectedVersion, context.clubId, expectedVersion + 1).run();
+    throw error;
+  }
+  return json({ ok: true, version: expectedVersion + 1, updatedAt: now }, requestId);
+}
+

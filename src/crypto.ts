@@ -1,6 +1,6 @@
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
-const PBKDF2_ITERATIONS = 210_000;
+const PBKDF2_ITERATIONS = 600_000;
 
 export function randomBytes(length: number): Uint8Array {
   const bytes = new Uint8Array(length);

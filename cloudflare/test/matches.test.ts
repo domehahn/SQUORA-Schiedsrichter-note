@@ -44,4 +44,29 @@ describe("match isolation and optimistic locking", () => {
     const now = new Date().toISOString();
     await expect(env.DB.prepare(`INSERT INTO match_events (club_id,id,match_id,event_type,match_ms,payload_json,created_at,updated_at) VALUES (?,?,?,?,0,'{}',?,?)`).bind(CLUB_A, crypto.randomUUID(), MATCH_B, "goal", now, now).run()).rejects.toThrow();
   });
+
+  it("guards whole-app synchronization by tenant and aggregate version", async () => {
+    const { cookieA } = await seedTwoTenants();
+    const payload = { version: 0, archive: [], deletedIds: [], tournaments: [], teams: [], current: null };
+    expect((await SELF.fetch(`${ORIGIN}/api/v1/clubs/${CLUB_A}/state`, { method: "PUT", headers: jsonHeaders(cookieA), body: JSON.stringify(payload) })).status).toBe(200);
+    expect((await SELF.fetch(`${ORIGIN}/api/v1/clubs/${CLUB_A}/state`, { method: "PUT", headers: jsonHeaders(cookieA), body: JSON.stringify(payload) })).status).toBe(409);
+    expect((await SELF.fetch(`${ORIGIN}/api/v1/clubs/${CLUB_B}/state`, { method: "PUT", headers: jsonHeaders(cookieA), body: JSON.stringify(payload) })).status).toBe(404);
+  });
+
+  it("removes non-whitelisted sensitive roster metadata before persistence", async () => {
+    const { cookieA } = await seedTwoTenants();
+    const teamId = crypto.randomUUID();
+    const playerId = crypto.randomUUID();
+    const payload = {
+      version: 0,
+      archive: [], tournaments: [], current: null,
+      teams: [{ id: teamId, name: "Synthetic team", roster: [{ id: playerId, name: "Max Testspieler", number: "7", pass: "0100-0001", birthdate: "01.01.2014" }] }],
+    };
+    expect((await SELF.fetch(`${ORIGIN}/api/v1/clubs/${CLUB_A}/state`, { method: "PUT", headers: jsonHeaders(cookieA), body: JSON.stringify(payload) })).status).toBe(200);
+    const response = await SELF.fetch(`${ORIGIN}/api/v1/clubs/${CLUB_A}/state`, { headers: { Cookie: cookieA } });
+    const text = await response.text();
+    expect(text).toContain("Max Testspieler");
+    expect(text).not.toContain("0100-0001");
+    expect(text).not.toContain("01.01.2014");
+  });
 });

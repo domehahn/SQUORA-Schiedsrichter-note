@@ -1,6 +1,7 @@
 import { listClubs, createClub, getClub } from "./api/clubs";
 import { login, logout, me } from "./api/auth";
 import { createMatch, deleteMatch, getMatch, listMatches, updateMatch } from "./api/matches";
+import { getState, putState } from "./api/state";
 import { requireAuth, type AuthContext } from "./auth/session";
 import { errorResponse, HttpError, recordRequest, SECURITY_HEADERS, withHeaders } from "./core/http";
 import { readLegacy } from "./legacy/kv-migration";
@@ -68,6 +69,13 @@ async function routeAuthenticated(request: Request, env: Env, auth: AuthContext,
     const clubId = decodeURIComponent(matches[1]);
     if (request.method === "GET") return listMatches(request, env, auth, clubId, requestId);
     if (request.method === "POST") return createMatch(request, env, auth, clubId, requestId);
+    return methodNotAllowed();
+  }
+  const state = path.match(/^\/api\/v1\/clubs\/([^/]+)\/state$/u);
+  if (state) {
+    const clubId = decodeURIComponent(state[1]);
+    if (request.method === "GET") return getState(env, auth, clubId, requestId);
+    if (request.method === "PUT") return putState(request, env, auth, clubId, requestId);
     return methodNotAllowed();
   }
   const match = path.match(/^\/api\/v1\/clubs\/([^/]+)\/matches\/([^/]+)$/u);
