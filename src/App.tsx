@@ -60,6 +60,7 @@ import {
   type Tournament,
 } from "./tournament";
 import { createSavedTeam, mergeTeams, sanitizeTeams, type SavedTeam } from "./teams";
+import { parseDfbnetRoster } from "./dfbnet";
 import { seasonStats, statsCsvRows } from "./stats";
 
 const EDITABLE_DURATION_GROUPS = new Set(["F", "G", "custom"]);
@@ -741,6 +742,36 @@ function App({ tenant, cryptoKey, onLock }: AppProps) {
     flash(`${team.name || "Team"} übernommen`);
   };
 
+  const readDfbnetRoster = async (file: File, existing: Player[]): Promise<{ roster: Player[]; teamName: string } | null> => {
+    try {
+      const parsed = parseDfbnetRoster(await file.text(), file.name);
+      if (parsed.players.length === 0) {
+        flash("Keine Spieler in der Datei erkannt");
+        return null;
+      }
+      const replace = existing.length === 0 || window.confirm(
+        `${parsed.players.length} Spieler aus DFBnet.\n\nOK = aktuelle Aufstellung ERSETZEN\nAbbrechen = anhängen`,
+      );
+      const roster = replace
+        ? parsed.players
+        : [...existing, ...parsed.players.filter((incoming) => !existing.some((entry) => entry.name.toLowerCase() === incoming.name.toLowerCase() && entry.number === incoming.number))];
+      const withoutNumbers = parsed.players.filter((player) => !player.number).length;
+      flash(withoutNumbers > 0
+        ? `${parsed.players.length} Spieler importiert – Rückennummern bitte ergänzen`
+        : `${parsed.players.length} Spieler importiert`);
+      return { roster, teamName: parsed.teamName };
+    } catch {
+      flash("Die CSV-Datei konnte nicht gelesen werden");
+      return null;
+    }
+  };
+
+  const importRosterCsv = (side: TeamSide) => async (file: File) => {
+    const existing = side === "home" ? match.homeRoster : match.awayRoster;
+    const result = await readDfbnetRoster(file, existing);
+    if (result) patchMatch(side === "home" ? { homeRoster: result.roster } : { awayRoster: result.roster });
+  };
+
   const phaseLabel = useMemo(() => ({
     setup: "Spielvorbereitung", firstHalf: "1. Halbzeit", halfTime: "Halbzeit",
     secondHalf: "2. Halbzeit", extraFirst: "1. HZ Verlängerung", extraBreak: "Pause Verlängerung",
@@ -991,11 +1022,11 @@ function App({ tenant, cryptoKey, onLock }: AppProps) {
         >
           <div className="roster-editor">
             <div>
-              <RosterEditor teamLabel={match.homeTeam || "Heim"} roster={match.homeRoster} onChange={(next) => patchMatch({ homeRoster: next })} />
+              <RosterEditor teamLabel={match.homeTeam || "Heim"} roster={match.homeRoster} onChange={(next) => patchMatch({ homeRoster: next })} onImportCsv={importRosterCsv("home")} />
               <button className="text-button" onClick={() => saveTeamToLibrary("home")}><Icon name="trophy" /> Heim in Bibliothek speichern</button>
             </div>
             <div>
-              <RosterEditor teamLabel={match.awayTeam || "Gast"} roster={match.awayRoster} onChange={(next) => patchMatch({ awayRoster: next })} />
+              <RosterEditor teamLabel={match.awayTeam || "Gast"} roster={match.awayRoster} onChange={(next) => patchMatch({ awayRoster: next })} onImportCsv={importRosterCsv("away")} />
               <button className="text-button" onClick={() => saveTeamToLibrary("away")}><Icon name="trophy" /> Gast in Bibliothek speichern</button>
             </div>
           </div>
@@ -1017,6 +1048,15 @@ function App({ tenant, cryptoKey, onLock }: AppProps) {
             onClear={() => { if (window.confirm("Gesamte Team-Bibliothek löschen?")) setTeams([]); }}
             onApply={applyTeamFromLibrary}
             onAdd={() => setTeams((list) => mergeTeams([createSavedTeam("Neues Team")], list))}
+            onImportNewTeam={async (file) => {
+              const result = await readDfbnetRoster(file, []);
+              if (result) setTeams((list) => mergeTeams([createSavedTeam(result.teamName || "Neues Team", "", result.roster)], list));
+            }}
+            onImportRoster={async (teamId, file) => {
+              const team = teams.find((entry) => entry.id === teamId);
+              const result = await readDfbnetRoster(file, team?.roster ?? []);
+              if (result) setTeams((list) => list.map((entry) => (entry.id === teamId ? { ...entry, roster: result.roster, name: entry.name || result.teamName, updatedAt: nowIso() } : entry)));
+            }}
           />
         </CollapsibleSection>
 
@@ -1311,8 +1351,14 @@ function MetaPanel({ meta, onChange }: { meta: MatchMeta; onChange: (patch: Part
   );
 }
 
-function RosterEditor({ teamLabel, roster, onChange }: { teamLabel: string; roster: Player[]; onChange: (next: Player[]) => void }) {
+function RosterEditor({ teamLabel, roster, onChange, onImportCsv }: {
+  teamLabel: string;
+  roster: Player[];
+  onChange: (next: Player[]) => void;
+  onImportCsv?: (file: File) => void;
+}) {
   const update = (id: string, patch: Partial<Player>) => onChange(roster.map((player) => (player.id === id ? { ...player, ...patch } : player)));
+  const csvInput = useRef<HTMLInputElement>(null);
   return (
     <div className="roster-col">
       <h4>{teamLabel}</h4>
@@ -1323,7 +1369,19 @@ function RosterEditor({ teamLabel, roster, onChange }: { teamLabel: string; rost
           <button className="mini-icon danger" aria-label="Spieler entfernen" onClick={() => onChange(roster.filter((entry) => entry.id !== player.id))}><Icon name="trash" /></button>
         </div>
       ))}
-      <button className="text-button" onClick={() => onChange([...roster, { id: uid(), number: "", name: "" }])}><Icon name="plus" /> Spieler hinzufügen</button>
+      <div className="roster-actions">
+        <button className="text-button" onClick={() => onChange([...roster, { id: uid(), number: "", name: "" }])}><Icon name="plus" /> Spieler hinzufügen</button>
+        {onImportCsv && (
+          <>
+            <button className="text-button" onClick={() => csvInput.current?.click()}><Icon name="upload" /> DFBnet-CSV</button>
+            <input ref={csvInput} type="file" accept=".csv,text/csv" hidden onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) onImportCsv(file);
+              event.target.value = "";
+            }} />
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -1504,21 +1562,31 @@ function TournamentReport({ tournament, archive }: { tournament: Tournament; arc
   );
 }
 
-function TeamLibraryPanel({ teams, onUpdate, onDelete, onClear, onApply, onAdd }: {
+function TeamLibraryPanel({ teams, onUpdate, onDelete, onClear, onApply, onAdd, onImportNewTeam, onImportRoster }: {
   teams: SavedTeam[];
   onUpdate: (id: string, patch: Partial<SavedTeam>) => void;
   onDelete: (id: string) => void;
   onClear: () => void;
   onApply: (side: TeamSide, id: string) => void;
   onAdd: () => void;
+  onImportNewTeam: (file: File) => void;
+  onImportRoster: (teamId: string, file: File) => void;
 }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const csvInput = useRef<HTMLInputElement>(null);
   return (
     <div className="tournament-panel">
       <div className="tournament-tools">
         <button className="icon-button" onClick={onAdd}><Icon name="plus" /> Team anlegen</button>
+        <button className="icon-button" onClick={() => csvInput.current?.click()}><Icon name="upload" /> Team aus DFBnet-CSV</button>
+        <input ref={csvInput} type="file" accept=".csv,text/csv" hidden onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (file) onImportNewTeam(file);
+          event.target.value = "";
+        }} />
         {teams.length > 0 && <button className="icon-button danger" onClick={onClear}><Icon name="trash" /> Bibliothek leeren</button>}
       </div>
+      <p className="collapsible-hint">DFBnet: „Mannschaften → Spieler → Export" (CSV). Die Liste enthält Namen, aber keine Rückennummern – diese im Kader ergänzen.</p>
       {teams.length === 0 && <p className="collapsible-hint">Noch keine Teams gespeichert. Lege hier eins an oder speichere ein Team aus „Mannschaftsaufstellungen".</p>}
       {teams.map((team) => (
         <div key={team.id} className={`tournament-card ${expandedId === team.id ? "is-open" : ""}`}>
@@ -1535,7 +1603,7 @@ function TeamLibraryPanel({ teams, onUpdate, onDelete, onClear, onApply, onAdd }
                 <label><span>Name</span><input value={team.name} onChange={(event) => onUpdate(team.id, { name: event.target.value })} /></label>
                 <label><span>Verein / Zusatz</span><input value={team.club} onChange={(event) => onUpdate(team.id, { club: event.target.value })} /></label>
               </div>
-              <RosterEditor teamLabel="Kader" roster={team.roster} onChange={(next) => onUpdate(team.id, { roster: next })} />
+              <RosterEditor teamLabel="Kader" roster={team.roster} onChange={(next) => onUpdate(team.id, { roster: next })} onImportCsv={(file) => onImportRoster(team.id, file)} />
               <div className="tournament-tools">
                 <button className="icon-button" onClick={() => onApply("home", team.id)}><Icon name="check" /> Als Heim übernehmen</button>
                 <button className="icon-button" onClick={() => onApply("away", team.id)}><Icon name="check" /> Als Gast übernehmen</button>

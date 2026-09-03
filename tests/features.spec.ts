@@ -121,6 +121,29 @@ test("erfasst ein Vorkommnis ohne Mannschaftsbezug", async ({ page }) => {
   await expect(page.locator(".event-table")).toContainText("Trinkpause wegen Hitze");
 });
 
+test("importiert einen Kader aus einer DFBnet-CSV", async ({ page }) => {
+  await openApp(page);
+  await page.getByRole("button", { name: "Mannschaftsaufstellungen" }).click();
+
+  const csv = [
+    "Name Künstlername;Vorname Rufname;Geb.;Nat.;Passnummer;Spielrecht ab;Reg. am",
+    "Testspieler ;Max (m) ;01.01.2014;XX;0100-0001;P 01.01.2026 F 01.01.2026;02.01.2026",
+    "Beispiel ;Anna (w) ;02.02.2014;XX;0100-0002;P 02.01.2026 F 02.01.2026;03.01.2026",
+    "Musterkind ;Kim (d) ;03.03.2015;XX;0100-0003;P 03.01.2026 F 03.01.2026;04.01.2026",
+  ].join("\n");
+
+  await page.locator(".roster-editor > div").first().locator("input[type='file']").setInputFiles({
+    name: "FC_Beispielstadt_II-20260903.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(csv, "utf-8"),
+  });
+
+  const rows = page.locator(".roster-editor > div").first().locator(".roster-row");
+  await expect(rows).toHaveCount(3);
+  await expect(rows.nth(0).locator(".roster-name")).toHaveValue("Max Testspieler");
+  await expect(rows.nth(1).locator(".roster-name")).toHaveValue("Anna Beispiel");
+});
+
 test("trennt Vereinsdaten: neuer Verein sieht das Archiv des anderen nicht", async ({ page }) => {
   await openApp(page); // legt "Testverein" an
   await page.getByLabel("Name der Heimmannschaft").fill("Verein-A-Team");

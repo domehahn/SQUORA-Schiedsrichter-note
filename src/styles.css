@@ -210,6 +210,7 @@ input:disabled, select:disabled { color: #6a7687; background: #f4f6f9; }
 .roster-num { width: 74px; flex: 0 0 auto; text-align: center; font-variant-numeric: tabular-nums; }
 .roster-name { flex: 1 1 auto; min-width: 0; }
 .roster-col .text-button { padding: 8px 6px; }
+.roster-actions { display: flex; flex-wrap: wrap; gap: 4px 10px; }
 
 /* Tournament panel */
 .tournament-panel { display: flex; flex-direction: column; gap: 12px; }
