@@ -38,10 +38,15 @@ export type EventKind =
 /** Event kinds a referee records via the quick-capture buttons (everything except automatic period markers). */
 export type ActionKind = Exclude<EventKind, "period">;
 
+export type LineupStatus = "start" | "bench" | "out";
+
 export interface Player {
   id: string;
   number: string;
   name: string;
+  pass?: string;
+  birthdate?: string;
+  status?: LineupStatus;
 }
 
 export interface MatchMeta {
@@ -236,8 +241,11 @@ export function sanitizeRoster(value: unknown): Player[] {
       id: typeof entry.id === "string" && entry.id ? entry.id : uid(),
       number: String(entry.number ?? "").slice(0, 4),
       name: String(entry.name ?? "").slice(0, 60),
+      pass: String(entry.pass ?? "").slice(0, 30),
+      birthdate: String(entry.birthdate ?? "").slice(0, 12),
+      status: entry.status === "start" || entry.status === "bench" || entry.status === "out" ? entry.status : undefined,
     }))
-    .filter((player) => player.number || player.name);
+    .filter((player) => player.number || player.name || player.pass);
 }
 
 const RUNNING_FIELD: Partial<Record<MatchPhase, "firstHalfMs" | "secondHalfMs" | "extraFirstMs" | "extraSecondMs">> = {
@@ -355,13 +363,22 @@ export interface ActiveTimePenalty {
   remainingMs: number;
 }
 
+/** Human label for a player identified by number and/or name. */
+export function describePlayer(number: string | undefined, name: string | undefined): string {
+  const num = (number ?? "").trim();
+  const nm = (name ?? "").trim();
+  if (num && nm) return `Nr. ${num} (${nm})`;
+  if (num) return `Nr. ${num}`;
+  if (nm) return nm;
+  return "Nr. ?";
+}
+
 export function activeTimePenalties(events: MatchEvent[], currentMatchMs: number): ActiveTimePenalty[] {
   return events
     .filter((event) => event.kind === "timePenalty" && event.team)
     .map((event) => {
       const endsAt = event.matchMs + (event.durationMin ?? 0) * 60_000;
-      const who = event.playerName ? `Nr. ${event.player} ${event.playerName}` : `Nr. ${event.player}`;
-      return { id: event.id, team: event.team as TeamSide, label: who, remainingMs: endsAt - currentMatchMs };
+      return { id: event.id, team: event.team as TeamSide, label: describePlayer(event.player, event.playerName), remainingMs: endsAt - currentMatchMs };
     })
     .filter((penalty) => penalty.remainingMs > 0)
     .sort((a, b) => a.remainingMs - b.remainingMs);
@@ -399,7 +416,7 @@ export interface EventInput {
 }
 
 export function buildEventLabel(kind: EventKind, team: string, data: EventInput): string {
-  const who = data.playerName ? `Nr. ${data.player} (${data.playerName})` : `Nr. ${data.player}`;
+  const who = describePlayer(data.player, data.playerName);
   switch (kind) {
     case "goal":
       return `Tor ${team} · ${who}`;
@@ -418,8 +435,8 @@ export function buildEventLabel(kind: EventKind, team: string, data: EventInput)
     case "timePenalty":
       return `Zeitstrafe ${data.durationMin ?? 0} min ${team} · ${who}`;
     case "substitution": {
-      const out = data.playerOutName ? `Nr. ${data.playerOut} (${data.playerOutName})` : `Nr. ${data.playerOut}`;
-      const inn = data.playerInName ? `Nr. ${data.playerIn} (${data.playerInName})` : `Nr. ${data.playerIn}`;
+      const out = describePlayer(data.playerOut, data.playerOutName);
+      const inn = describePlayer(data.playerIn, data.playerInName);
       return `Wechsel ${team} · ${out} raus, ${inn} rein`;
     }
     case "note":
@@ -439,40 +456,58 @@ export function substitutionCount(events: MatchEvent[], side: TeamSide): number 
 }
 
 export interface PlayerSanction {
+  key: string;
   player: string;
-  playerName?: string;
+  playerName: string;
+  label: string;
   yellow: number;
   yellowRed: number;
   red: number;
   timePenalties: number;
 }
 
+/** Identity key for a player – the jersey number if present, otherwise the name. */
+export function playerKey(number: string | undefined, name: string | undefined): string {
+  return (number ?? "").trim() || (name ?? "").trim();
+}
+
 /** Per-player card / sanction summary for one team, ordered by severity. */
 export function sanctions(events: MatchEvent[], side: TeamSide): PlayerSanction[] {
   const map = new Map<string, PlayerSanction>();
   for (const event of events) {
-    if (event.team !== side || !event.player) continue;
+    if (event.team !== side) continue;
     if (event.kind !== "yellow" && event.kind !== "yellowRed" && event.kind !== "red" && event.kind !== "timePenalty") continue;
-    const key = event.player;
-    const row = map.get(key) ?? { player: key, playerName: event.playerName, yellow: 0, yellowRed: 0, red: 0, timePenalties: 0 };
+    const key = playerKey(event.player, event.playerName);
+    if (!key) continue;
+    const row = map.get(key) ?? {
+      key,
+      player: (event.player ?? "").trim(),
+      playerName: (event.playerName ?? "").trim(),
+      label: describePlayer(event.player, event.playerName),
+      yellow: 0, yellowRed: 0, red: 0, timePenalties: 0,
+    };
     if (event.kind === "yellow") row.yellow += 1;
     else if (event.kind === "yellowRed") row.yellowRed += 1;
     else if (event.kind === "red") row.red += 1;
     else row.timePenalties += 1;
-    if (!row.playerName && event.playerName) row.playerName = event.playerName;
+    if (!row.player && event.player) row.player = event.player.trim();
+    if (!row.playerName && event.playerName) row.playerName = event.playerName.trim();
+    row.label = describePlayer(row.player, row.playerName);
     map.set(key, row);
   }
   return [...map.values()].sort((a, b) =>
-    (b.red + b.yellowRed) - (a.red + a.yellowRed) || b.yellow - a.yellow || a.player.localeCompare(b.player, "de", { numeric: true }),
+    (b.red + b.yellowRed) - (a.red + a.yellowRed) || b.yellow - a.yellow || a.key.localeCompare(b.key, "de", { numeric: true }),
   );
 }
 
-/** True if this player already has a yellow (not yet turned into yellow-red) for this team. */
-export function hasPriorYellow(events: MatchEvent[], side: TeamSide, player: string): boolean {
-  const trimmed = player.trim();
+/** True if this player (matched by number or name) already has a yellow not yet turned into yellow-red for this team. */
+export function hasPriorYellow(events: MatchEvent[], side: TeamSide, playerRef: string): boolean {
+  const trimmed = playerRef.trim();
   if (!trimmed) return false;
-  const yellows = events.filter((e) => e.team === side && e.player === trimmed && e.kind === "yellow").length;
-  const upgrades = events.filter((e) => e.team === side && e.player === trimmed && (e.kind === "yellowRed" || e.kind === "red")).length;
+  const matches = (event: MatchEvent) =>
+    event.team === side && ((event.player ?? "").trim() === trimmed || (event.playerName ?? "").trim() === trimmed);
+  const yellows = events.filter((event) => matches(event) && event.kind === "yellow").length;
+  const upgrades = events.filter((event) => matches(event) && (event.kind === "yellowRed" || event.kind === "red")).length;
   return yellows >= 1 && upgrades === 0;
 }
 

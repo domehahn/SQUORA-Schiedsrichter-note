@@ -52,6 +52,8 @@ export function parseDfbnetRoster(csv: string, filename = ""): DfbnetImport {
   const lastIndex = findColumn(header, ["name künstlername", "name", "nachname", "spieler"]);
   const firstIndex = findColumn(header, ["vorname rufname", "vorname", "rufname"]);
   const numberIndex = findColumn(header, ["rnr", "rückennummer", "trikot", "nr.", "nr", "nummer"]);
+  const passIndex = findColumn(header, ["passnummer", "pass-nr", "passnr", "pass"]);
+  const birthIndex = findColumn(header, ["geb.", "geb", "geburtsdatum", "geburtstag"]);
 
   const seen = new Set<string>();
   const players: Player[] = [];
@@ -61,12 +63,14 @@ export function parseDfbnetRoster(csv: string, filename = ""): DfbnetImport {
     const last = clean(cells[lastIndex >= 0 ? lastIndex : 0]);
     const first = clean(cells[firstIndex >= 0 ? firstIndex : 1]);
     const number = numberIndex >= 0 ? (cells[numberIndex] ?? "").replace(/[^0-9A-Za-z]/g, "").slice(0, 4) : "";
+    const pass = passIndex >= 0 ? (cells[passIndex] ?? "").trim().slice(0, 30) : "";
+    const birthdate = birthIndex >= 0 ? (cells[birthIndex] ?? "").trim().slice(0, 12) : "";
     const name = [first, last].filter(Boolean).join(" ").trim().slice(0, 60);
-    if (!name && !number) continue;
-    const key = `${number}|${name.toLowerCase()}`;
+    if (!name && !number && !pass) continue;
+    const key = `${pass || number}|${name.toLowerCase()}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    players.push({ id: uid(), number, name });
+    players.push({ id: uid(), number, name, pass, birthdate });
   }
   return { players, teamName };
 }

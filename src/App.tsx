@@ -43,6 +43,7 @@ import {
   uid,
   type ActionKind,
   type MatchEvent,
+  type LineupStatus,
   type MatchMeta,
   type MatchPhase,
   type MatchState,
@@ -983,8 +984,8 @@ function App({ tenant, cryptoKey, onLock }: AppProps) {
                   {rows.length === 0 ? <p className="collapsible-hint">Keine Karten oder Zeitstrafen.</p> : (
                     <ul>
                       {rows.map((row) => (
-                        <li key={row.player}>
-                          <span className="sanction-player">Nr. {row.player}{row.playerName ? ` ${row.playerName}` : ""}</span>
+                        <li key={row.key}>
+                          <span className="sanction-player">{row.label}</span>
                           <span className="sanction-marks">
                             {row.yellow > 0 && <i className="mini-card yellow" title="Gelb" />}
                             {row.yellowRed > 0 && <i className="mini-card yellowred" title="Gelb-Rot" />}
@@ -1016,17 +1017,17 @@ function App({ tenant, cryptoKey, onLock }: AppProps) {
           id="roster"
           icon="user"
           title="Mannschaftsaufstellungen"
-          hint="Nummern mit Namen hinterlegen – im Erfassungsdialog wird der Name automatisch ergänzt."
+          hint="Kader je Team, getrennt nach Aufgestellt / Bank / Nicht nominiert. Import aus DFBnet-CSV möglich; im Erfassungsdialog wird dann per Name statt Nummer gewählt."
           open={openPanel === "roster"}
           onToggle={() => setOpenPanel((current) => (current === "roster" ? null : "roster"))}
         >
           <div className="roster-editor">
             <div>
-              <RosterEditor teamLabel={match.homeTeam || "Heim"} roster={match.homeRoster} onChange={(next) => patchMatch({ homeRoster: next })} onImportCsv={importRosterCsv("home")} />
+              <RosterEditor teamLabel={match.homeTeam || "Heim"} roster={match.homeRoster} grouped onChange={(next) => patchMatch({ homeRoster: next })} onImportCsv={importRosterCsv("home")} />
               <button className="text-button" onClick={() => saveTeamToLibrary("home")}><Icon name="trophy" /> Heim in Bibliothek speichern</button>
             </div>
             <div>
-              <RosterEditor teamLabel={match.awayTeam || "Gast"} roster={match.awayRoster} onChange={(next) => patchMatch({ awayRoster: next })} onImportCsv={importRosterCsv("away")} />
+              <RosterEditor teamLabel={match.awayTeam || "Gast"} roster={match.awayRoster} grouped onChange={(next) => patchMatch({ awayRoster: next })} onImportCsv={importRosterCsv("away")} />
               <button className="text-button" onClick={() => saveTeamToLibrary("away")}><Icon name="trophy" /> Gast in Bibliothek speichern</button>
             </div>
           </div>
@@ -1293,8 +1294,8 @@ function TeamActions({ side, team, subs, sanctions: sanctionRows, disabled, onAc
         {cardCarriers.length > 0 && (
           <span className="team-tally-cards">
             {cardCarriers.map((row) => (
-              <span key={row.player} className="tally-card">
-                Nr. {row.player}
+              <span key={row.key} className="tally-card">
+                {row.playerName || `Nr. ${row.player}`}
                 {row.yellow > 0 && <i className="mini-card yellow" />}
                 {row.yellowRed > 0 && <i className="mini-card yellowred" />}
                 {row.red > 0 && <i className="mini-card red" />}
@@ -1351,26 +1352,73 @@ function MetaPanel({ meta, onChange }: { meta: MatchMeta; onChange: (patch: Part
   );
 }
 
-function RosterEditor({ teamLabel, roster, onChange, onImportCsv }: {
+const LINEUP_GROUPS: { key: LineupStatus; label: string }[] = [
+  { key: "start", label: "Aufgestellt" },
+  { key: "bench", label: "Bank" },
+  { key: "out", label: "Nicht nominiert" },
+];
+
+function RosterEditor({ teamLabel, roster, onChange, onImportCsv, grouped = false }: {
   teamLabel: string;
   roster: Player[];
   onChange: (next: Player[]) => void;
   onImportCsv?: (file: File) => void;
+  grouped?: boolean;
 }) {
   const update = (id: string, patch: Partial<Player>) => onChange(roster.map((player) => (player.id === id ? { ...player, ...patch } : player)));
   const csvInput = useRef<HTMLInputElement>(null);
+
+  const row = (player: Player) => (
+    <tr key={player.id}>
+      {grouped && (
+        <td>
+          <select className="roster-status" value={player.status ?? "out"} onChange={(event) => update(player.id, { status: event.target.value as LineupStatus })}>
+            <option value="start">Aufgestellt</option>
+            <option value="bench">Bank</option>
+            <option value="out">Nicht nominiert</option>
+          </select>
+        </td>
+      )}
+      <td><input className="roster-num" inputMode="numeric" maxLength={4} placeholder="–" value={player.number} onChange={(event) => update(player.id, { number: event.target.value })} /></td>
+      <td><input className="roster-name" maxLength={60} placeholder="Name" value={player.name} onChange={(event) => update(player.id, { name: event.target.value })} /></td>
+      <td><input className="roster-pass" maxLength={30} placeholder="–" value={player.pass ?? ""} onChange={(event) => update(player.id, { pass: event.target.value })} /></td>
+      <td><input className="roster-birth" maxLength={12} placeholder="TT.MM.JJJJ" value={player.birthdate ?? ""} onChange={(event) => update(player.id, { birthdate: event.target.value })} /></td>
+      <td><button className="mini-icon danger" aria-label="Spieler entfernen" onClick={() => onChange(roster.filter((entry) => entry.id !== player.id))}><Icon name="trash" /></button></td>
+    </tr>
+  );
+
+  const head = (
+    <tr>
+      {grouped && <th>Status</th>}
+      <th>Nr.</th><th>Name</th><th>Passnr.</th><th>Geb.</th><th aria-label="Entfernen" />
+    </tr>
+  );
+
   return (
     <div className="roster-col">
-      <h4>{teamLabel}</h4>
-      {roster.map((player) => (
-        <div key={player.id} className="roster-row">
-          <input className="roster-num" inputMode="numeric" maxLength={4} placeholder="Nr." value={player.number} onChange={(event) => update(player.id, { number: event.target.value })} />
-          <input className="roster-name" maxLength={60} placeholder="Name" value={player.name} onChange={(event) => update(player.id, { name: event.target.value })} />
-          <button className="mini-icon danger" aria-label="Spieler entfernen" onClick={() => onChange(roster.filter((entry) => entry.id !== player.id))}><Icon name="trash" /></button>
+      <h4>{teamLabel} {roster.length > 0 && <span className="count">{roster.length}</span>}</h4>
+
+      {roster.length === 0 ? null : grouped ? (
+        LINEUP_GROUPS.map((group) => {
+          const players = roster.filter((player) => (player.status ?? "out") === group.key);
+          if (players.length === 0) return <p key={group.key} className="roster-group-empty">{group.label} <span className="count">0</span></p>;
+          return (
+            <div key={group.key} className={`roster-group group-${group.key}`}>
+              <h5>{group.label} <span className="count">{players.length}</span></h5>
+              <div className="table-scroll">
+                <table className="roster-table"><thead>{head}</thead><tbody>{players.map(row)}</tbody></table>
+              </div>
+            </div>
+          );
+        })
+      ) : (
+        <div className="table-scroll">
+          <table className="roster-table"><thead>{head}</thead><tbody>{roster.map(row)}</tbody></table>
         </div>
-      ))}
+      )}
+
       <div className="roster-actions">
-        <button className="text-button" onClick={() => onChange([...roster, { id: uid(), number: "", name: "" }])}><Icon name="plus" /> Spieler hinzufügen</button>
+        <button className="text-button" onClick={() => onChange([...roster, { id: uid(), number: "", name: "", pass: "", birthdate: "", status: grouped ? "start" : undefined }])}><Icon name="plus" /> Spieler hinzufügen</button>
         {onImportCsv && (
           <>
             <button className="text-button" onClick={() => csvInput.current?.click()}><Icon name="upload" /> DFBnet-CSV</button>
@@ -1380,6 +1428,9 @@ function RosterEditor({ teamLabel, roster, onChange, onImportCsv }: {
               event.target.value = "";
             }} />
           </>
+        )}
+        {grouped && roster.some((player) => (player.status ?? "out") !== "start") && (
+          <button className="text-button" onClick={() => onChange(roster.map((player) => ({ ...player, status: "start" as LineupStatus })))}>Alle aufstellen</button>
         )}
       </div>
     </div>

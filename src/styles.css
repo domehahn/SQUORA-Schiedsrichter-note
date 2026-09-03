@@ -205,12 +205,31 @@ input:disabled, select:disabled { color: #6a7687; background: #f4f6f9; }
 .meta-grid input, .meta-grid textarea, .meta-grid select { min-height: 42px; font-size: 14px; }
 .meta-grid textarea { resize: vertical; line-height: 1.5; padding: 10px 12px; }
 .roster-editor { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-.roster-col h4 { margin: 0 0 10px; font-size: 12px; color: #46566e; }
-.roster-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
-.roster-num { width: 74px; flex: 0 0 auto; text-align: center; font-variant-numeric: tabular-nums; }
-.roster-name { flex: 1 1 auto; min-width: 0; }
+.roster-col h4 { margin: 0 0 10px; font-size: 12px; color: #46566e; display: flex; align-items: center; gap: 6px; }
 .roster-col .text-button { padding: 8px 6px; }
-.roster-actions { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.roster-actions { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 6px; }
+
+.roster-table { width: 100%; min-width: 440px; border-collapse: collapse; font-size: 12px; }
+.roster-table th { text-align: left; padding: 6px 8px; background: #f7fafd; color: #64748b; font-size: 9px; text-transform: uppercase; letter-spacing: .08em; font-weight: 800; border-bottom: 1px solid #e2e8f1; white-space: nowrap; }
+.roster-table td { padding: 4px 6px; border-bottom: 1px solid #eef2f6; }
+.roster-table input, .roster-table select { width: 100%; min-height: 36px; font-size: 13px; padding: 6px 8px; }
+.roster-table .roster-num { width: 46px; text-align: center; font-variant-numeric: tabular-nums; }
+.roster-table td:has(.roster-name) { width: auto; min-width: 130px; }
+.roster-table .roster-pass { width: 92px; }
+.roster-table .roster-birth { width: 104px; }
+.roster-table td:has(.roster-status) { width: 148px; }
+.roster-table .roster-status { padding-right: 4px; }
+.roster-table .mini-icon { margin: 0; }
+
+.roster-group { margin-bottom: 12px; }
+.roster-group h5 { margin: 0 0 5px; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; font-weight: 850; display: flex; align-items: center; gap: 6px; }
+.roster-group.group-start h5 { color: #17904a; }
+.roster-group.group-bench h5 { color: #2670c4; }
+.roster-group.group-out h5 { color: #8a94a6; }
+.roster-group.group-start .roster-table td { border-bottom-color: #e3f2e8; }
+.roster-group-empty { margin: 0 0 8px; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; font-weight: 800; color: #9aa5b4; display: flex; align-items: center; gap: 6px; }
+
+.link-button { border: 0; background: none; padding: 0; color: #2072c7; font: inherit; font-size: 9px; font-weight: 700; cursor: pointer; text-decoration: underline; }
 
 /* Tournament panel */
 .tournament-panel { display: flex; flex-direction: column; gap: 12px; }

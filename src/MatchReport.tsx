@@ -76,10 +76,19 @@ export function MatchReport({ state, className = "" }: { state: MatchState; clas
           {(["home", "away"] as const).map((side) => {
             const roster = side === "home" ? state.homeRoster : state.awayRoster;
             if (!roster.length) return null;
+            const grouped = roster.some((player) => player.status && player.status !== "out");
+            const line = (players: typeof roster) => players
+              .map((player) => `${player.number ? `${player.number} ` : ""}${player.name}`.trim())
+              .filter(Boolean)
+              .join(" · ");
+            const starters = grouped ? roster.filter((player) => player.status === "start") : roster;
+            const bench = grouped ? roster.filter((player) => player.status === "bench") : [];
             return (
               <div key={side}>
                 <h4>{side === "home" ? state.homeTeam : state.awayTeam}</h4>
-                <p>{roster.map((player) => `${player.number}${player.name ? ` ${player.name}` : ""}`).join(" · ")}</p>
+                {grouped && <p><b>Aufgestellt:</b> {line(starters) || "–"}</p>}
+                {grouped && bench.length > 0 && <p><b>Bank:</b> {line(bench)}</p>}
+                {!grouped && <p>{line(starters)}</p>}
               </div>
             );
           })}

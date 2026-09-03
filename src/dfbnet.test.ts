@@ -8,12 +8,12 @@ Musterkind ;Kim (d) ;03.03.2015;XX;0100-0003;P 03.01.2026 F 03.01.2026;04.01.202
 `;
 
 describe("parseDfbnetRoster", () => {
-  it("liest Namen aus dem DFBnet-Export, ohne Rückennummern", () => {
+  it("liest synthetische Testdaten aus dem DFBnet-Export", () => {
     const { players } = parseDfbnetRoster(SAMPLE, "FC_Beispielstadt_II-20260903.csv");
     expect(players).toHaveLength(3);
-    expect(players[0]).toMatchObject({ number: "", name: "Max Testspieler" });
+    expect(players[0]).toMatchObject({ number: "", name: "Max Testspieler", pass: "0100-0001", birthdate: "01.01.2014" });
     expect(players[1].name).toBe("Anna Beispiel");
-    expect(players[2].name).toBe("Kim Musterkind");
+    expect(players[2]).toMatchObject({ name: "Kim Musterkind", pass: "0100-0003" });
     expect(players.every((player) => typeof player.id === "string" && player.id.length > 0)).toBe(true);
   });
 

@@ -132,16 +132,43 @@ test("importiert einen Kader aus einer DFBnet-CSV", async ({ page }) => {
     "Musterkind ;Kim (d) ;03.03.2015;XX;0100-0003;P 03.01.2026 F 03.01.2026;04.01.2026",
   ].join("\n");
 
-  await page.locator(".roster-editor > div").first().locator("input[type='file']").setInputFiles({
+  const home = page.locator(".roster-editor > div").first();
+  await home.locator("input[type='file']").setInputFiles({
     name: "FC_Beispielstadt_II-20260903.csv",
     mimeType: "text/csv",
     buffer: Buffer.from(csv, "utf-8"),
   });
 
-  const rows = page.locator(".roster-editor > div").first().locator(".roster-row");
+  // frisch importierte Spieler landen unter "Nicht nominiert"
+  const rows = home.locator(".roster-group.group-out .roster-table tbody tr");
   await expect(rows).toHaveCount(3);
   await expect(rows.nth(0).locator(".roster-name")).toHaveValue("Max Testspieler");
+  await expect(rows.nth(0).locator(".roster-pass")).toHaveValue("0100-0001");
   await expect(rows.nth(1).locator(".roster-name")).toHaveValue("Anna Beispiel");
+
+  // aufstellen: einen Spieler auf "Aufgestellt" setzen
+  await rows.nth(0).locator(".roster-status").selectOption("start");
+  await expect(home.locator(".roster-group.group-start .roster-table tbody tr")).toHaveCount(1);
+});
+
+test("wählt im Erfassungsdialog einen Spieler aus der Aufstellung", async ({ page }) => {
+  await openApp(page);
+  await page.getByLabel("Name der Heimmannschaft").fill("SV Kader");
+  await page.getByRole("button", { name: "Mannschaftsaufstellungen" }).click();
+  const home = page.locator(".roster-editor > div").first();
+  await home.locator("input[type='file']").setInputFiles({
+    name: "team.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from("Name Künstlername;Vorname Rufname;Geb.\nMeier ;Anna (w) ;01.01.2015\nKern ;Ben (m) ;02.02.2015", "utf-8"),
+  });
+  await home.locator(".roster-group.group-out .roster-table tbody tr").first().locator(".roster-status").selectOption("start");
+  await page.getByRole("button", { name: "Mannschaftsaufstellungen" }).click();
+
+  await page.getByRole("button", { name: "Spiel starten" }).click();
+  await page.locator(".team-actions.home").getByRole("button", { name: "Tor Heim", exact: true }).click();
+  await page.locator(".modal select").first().selectOption({ label: "Anna Meier" });
+  await page.getByRole("button", { name: "Ereignis speichern" }).click();
+  await expect(page.locator(".event-table")).toContainText("Tor SV Kader · Anna Meier");
 });
 
 test("trennt Vereinsdaten: neuer Verein sieht das Archiv des anderen nicht", async ({ page }) => {

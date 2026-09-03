@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Icon } from "./icons";
 import {
+  describePlayer,
   eventMeta,
   rosterName,
   type ActionKind,
@@ -22,7 +23,7 @@ interface Props {
   teamLabel: string;
   roster: Player[];
   defaultTimeText: string;
-  hasPriorYellow?: (player: string) => boolean;
+  hasPriorYellow?: (playerRef: string) => boolean;
   onClose: () => void;
   onSave: (payload: { kind: ActionKind; data: EventInput; timeText: string }) => void;
 }
@@ -33,37 +34,59 @@ const NUMBER_KINDS = new Set<ActionKind>([
 
 const TIME_RE = /^(\d{1,3}):([0-5]?\d)$/;
 
+function optionLabel(player: Player): string {
+  if (player.number.trim() && player.name.trim()) return `Nr. ${player.number} · ${player.name}`;
+  if (player.number.trim()) return `Nr. ${player.number}`;
+  return player.name.trim() || "Ohne Angabe";
+}
+
 export function EventDialog({ request, teamLabel, roster, defaultTimeText, hasPriorYellow, onClose, onSave }: Props) {
   const previous = request.event;
   const [player, setPlayer] = useState(previous?.player ?? "");
+  const [playerName, setPlayerName] = useState(previous?.playerName ?? "");
   const [playerOut, setPlayerOut] = useState(previous?.playerOut ?? "");
+  const [playerOutName, setPlayerOutName] = useState(previous?.playerOutName ?? "");
   const [playerIn, setPlayerIn] = useState(previous?.playerIn ?? "");
+  const [playerInName, setPlayerInName] = useState(previous?.playerInName ?? "");
   const [duration, setDuration] = useState(previous?.durationMin ?? (request.action === "timePenalty" ? 5 : 0));
   const [converted, setConverted] = useState(request.action !== "penaltyMissed");
   const [asSecondYellow, setAsSecondYellow] = useState(false);
   const [text, setText] = useState(previous?.text ?? "");
   const [timeText, setTimeText] = useState(previous?.exactTime ?? defaultTimeText);
-  const firstInput = useRef<HTMLInputElement>(null);
-
-  useEffect(() => firstInput.current?.focus(), []);
 
   const isSub = request.action === "substitution";
   const isNote = request.action === "note";
   const isPenalty = request.action === "penaltyGoal" || request.action === "penaltyMissed";
   const needsNumber = NUMBER_KINDS.has(request.action);
 
+  const hasStatuses = roster.some((entry) => entry.status && entry.status !== "out");
+  const nominated = hasStatuses ? roster.filter((entry) => entry.status && entry.status !== "out") : roster;
+  const inNominated = (num: string, name: string) =>
+    nominated.some((entry) => entry.number.trim() === num.trim() && entry.name.trim() === name.trim() && (num.trim() || name.trim()));
+  const [manual, setManual] = useState(
+    nominated.length === 0 ||
+      (request.mode === "edit" && !isNote && !(isSub
+        ? inNominated(previous?.playerOut ?? "", previous?.playerOutName ?? "")
+        : inNominated(previous?.player ?? "", previous?.playerName ?? ""))),
+  );
+
+  const idOf = (num: string, name: string) =>
+    nominated.find((entry) => entry.number.trim() === num.trim() && entry.name.trim() === name.trim())?.id ?? "";
+
+  const has = (num: string, name: string) => Boolean(num.trim() || name.trim());
   const timeValid = TIME_RE.test(timeText.trim());
   const valid = timeValid && (isSub
-    ? Boolean(playerOut.trim() && playerIn.trim())
+    ? has(playerOut, playerOutName) && has(playerIn, playerInName)
     : isNote
       ? Boolean(text.trim())
       : needsNumber
-        ? Boolean(player.trim())
+        ? has(player, playerName)
         : true);
 
   const title = request.mode === "edit" ? `${eventMeta[request.action].title} bearbeiten` : eventMeta[request.action].title;
-  const suggestedName = needsNumber ? rosterName(roster, player) : "";
-  const secondYellow = request.action === "yellow" && request.mode === "create" && Boolean(hasPriorYellow?.(player));
+  const secondYellow = request.action === "yellow" && request.mode === "create" && Boolean(hasPriorYellow?.(player.trim() || playerName.trim()));
+
+  const finalName = (num: string, name: string) => name.trim() || rosterName(roster, num);
 
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
@@ -76,18 +99,61 @@ export function EventDialog({ request, teamLabel, roster, defaultTimeText, hasPr
     const data: EventInput = isSub
       ? {
           playerOut: playerOut.trim(),
-          playerOutName: rosterName(roster, playerOut),
+          playerOutName: finalName(playerOut, playerOutName),
           playerIn: playerIn.trim(),
-          playerInName: rosterName(roster, playerIn),
+          playerInName: finalName(playerIn, playerInName),
         }
       : isNote
         ? { text: text.trim() }
         : {
             player: player.trim(),
-            playerName: rosterName(roster, player),
+            playerName: finalName(player, playerName),
             ...(request.action === "timePenalty" ? { durationMin: Number(duration) || 0 } : {}),
           };
     onSave({ kind, data, timeText: timeText.trim() });
+  };
+
+  const pickerField = (label: string, num: string, name: string, setNum: (value: string) => void, setName: (value: string) => void, autoFocus = false) => {
+    if (manual) {
+      return (
+        <label className="player-field">
+          <span>{label}</span>
+          <input
+            autoFocus={autoFocus}
+            list="roster-numbers"
+            inputMode="numeric"
+            pattern="[A-Za-z0-9\-]+"
+            maxLength={4}
+            value={num}
+            onChange={(event) => { setNum(event.target.value); setName(rosterName(roster, event.target.value)); }}
+            placeholder="z. B. 10"
+          />
+          <small>
+            {name ? `→ ${name}` : nominated.length > 0
+              ? <button type="button" className="link-button" onClick={() => setManual(false)}>Aus Aufstellung wählen</button>
+              : "Name wird aus der Aufstellung übernommen, falls hinterlegt."}
+          </small>
+        </label>
+      );
+    }
+    return (
+      <label className="player-field">
+        <span>{label}</span>
+        <select
+          autoFocus={autoFocus}
+          value={idOf(num, name)}
+          onChange={(event) => {
+            const chosen = nominated.find((entry) => entry.id === event.target.value);
+            setNum(chosen?.number ?? "");
+            setName(chosen?.name ?? "");
+          }}
+        >
+          <option value="">– Spieler wählen –</option>
+          {nominated.map((entry) => <option key={entry.id} value={entry.id}>{optionLabel(entry)}</option>)}
+        </select>
+        <small><button type="button" className="link-button" onClick={() => setManual(true)}>Nummer manuell eingeben</button></small>
+      </label>
+    );
   };
 
   return (
@@ -112,36 +178,24 @@ export function EventDialog({ request, teamLabel, roster, defaultTimeText, hasPr
 
           {isSub ? (
             <div className="sub-fields">
-              <label>
-                <span>Rückennummer raus</span>
-                <input ref={firstInput} list="roster-numbers" inputMode="numeric" pattern="[A-Za-z0-9\-]+" maxLength={4} value={playerOut} onChange={(e) => setPlayerOut(e.target.value)} placeholder="z. B. 8" />
-                <small>{rosterName(roster, playerOut) || <><i className="out-arrow">↓</i> verlässt das Feld</>}</small>
-              </label>
-              <label>
-                <span>Rückennummer rein</span>
-                <input list="roster-numbers" inputMode="numeric" pattern="[A-Za-z0-9\-]+" maxLength={4} value={playerIn} onChange={(e) => setPlayerIn(e.target.value)} placeholder="z. B. 14" />
-                <small>{rosterName(roster, playerIn) || <><i className="in-arrow">↑</i> betritt das Feld</>}</small>
-              </label>
+              {pickerField("Raus", playerOut, playerOutName, setPlayerOut, setPlayerOutName, true)}
+              {pickerField("Rein", playerIn, playerInName, setPlayerIn, setPlayerInName)}
             </div>
           ) : isNote ? (
             <label className="player-field">
               <span>Vorkommnis</span>
-              <textarea ref={firstInput as unknown as React.RefObject<HTMLTextAreaElement>} rows={3} maxLength={400} value={text} onChange={(e) => setText(e.target.value)} placeholder="z. B. Trinkpause, Behandlung, Zuschauer-Vorfall …" />
+              <textarea autoFocus rows={3} maxLength={400} value={text} onChange={(event) => setText(event.target.value)} placeholder="z. B. Trinkpause, Behandlung, Zuschauer-Vorfall …" />
               <small>Erscheint in der Tabelle und im Spielbericht.</small>
             </label>
           ) : (
-            <label className="player-field">
-              <span>Rückennummer</span>
-              <input ref={firstInput} list="roster-numbers" inputMode="numeric" pattern="[A-Za-z0-9\-]+" maxLength={4} value={player} onChange={(e) => setPlayer(e.target.value)} placeholder="z. B. 10" />
-              <small>{suggestedName ? `→ ${suggestedName}` : "Name wird aus der Aufstellung übernommen, falls hinterlegt."}</small>
-            </label>
+            pickerField("Spieler", player, playerName, setPlayer, setPlayerName, true)
           )}
 
           {secondYellow && (
             <div className="dialog-warning" role="alert">
-              <strong>Nr. {player.trim()} hat bereits Gelb.</strong>
+              <strong>{describePlayer(player.trim(), playerName.trim())} hat bereits Gelb.</strong>
               <label className="checkbox-field">
-                <input type="checkbox" checked={asSecondYellow} onChange={(e) => setAsSecondYellow(e.target.checked)} />
+                <input type="checkbox" checked={asSecondYellow} onChange={(event) => setAsSecondYellow(event.target.checked)} />
                 <span>Als Gelb-Rot (Feldverweis) erfassen</span>
               </label>
             </div>
@@ -150,7 +204,7 @@ export function EventDialog({ request, teamLabel, roster, defaultTimeText, hasPr
           {request.action === "timePenalty" && (
             <label className="player-field">
               <span>Dauer</span>
-              <select value={duration} onChange={(e) => setDuration(Number(e.target.value))}>
+              <select value={duration} onChange={(event) => setDuration(Number(event.target.value))}>
                 {[1, 2, 3, 5, 8, 10, 15].map((minutes) => <option key={minutes} value={minutes}>{minutes} Minuten</option>)}
               </select>
             </label>
@@ -158,7 +212,7 @@ export function EventDialog({ request, teamLabel, roster, defaultTimeText, hasPr
 
           {isPenalty && (
             <label className="checkbox-field">
-              <input type="checkbox" checked={converted} onChange={(e) => setConverted(e.target.checked)} />
+              <input type="checkbox" checked={converted} onChange={(event) => setConverted(event.target.checked)} />
               <span>Elfmeter verwandelt</span>
             </label>
           )}
@@ -167,7 +221,7 @@ export function EventDialog({ request, teamLabel, roster, defaultTimeText, hasPr
             <summary>Zeitpunkt anpassen</summary>
             <label className="player-field">
               <span>Spielzeit (MM:SS)</span>
-              <input inputMode="numeric" value={timeText} onChange={(e) => setTimeText(e.target.value)} placeholder="z. B. 42:15" aria-invalid={!timeValid} />
+              <input inputMode="numeric" value={timeText} onChange={(event) => setTimeText(event.target.value)} placeholder="z. B. 42:15" aria-invalid={!timeValid} />
               <small>{timeValid ? "Fortlaufende Spielzeit inkl. 2. Halbzeit." : "Bitte im Format MM:SS eingeben."}</small>
             </label>
           </details>
