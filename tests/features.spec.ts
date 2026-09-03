@@ -172,8 +172,12 @@ test("trennt Vereinsdaten: neuer Verein sieht das Archiv des anderen nicht", asy
   await password.nth(1).fill("anderes-geheimnis");
   await page.getByRole("button", { name: /Verein anlegen/ }).click();
 
+  // frischer Verein -> erste Mannschaft anlegen
+  await page.getByLabel("Mannschaft").fill("E1");
+  await page.getByRole("button", { name: /Anlegen & öffnen/ }).click();
+
   await expect(page.locator("#setup-title")).toBeVisible();
-  await expect(page.getByRole("button", { name: /Zweiter Verein/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Zweiter Verein · E1/ })).toBeVisible();
   await expect(page.locator(".archive-table")).toHaveCount(0);
   await expect(page.getByText("Noch keine gespeicherten Spiele")).toBeVisible();
 });

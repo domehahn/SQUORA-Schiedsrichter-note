@@ -2,6 +2,7 @@ import { listClubs, createClub, getClub } from "./api/clubs";
 import { login, logout, me } from "./api/auth";
 import { createMatch, deleteMatch, getMatch, listMatches, updateMatch } from "./api/matches";
 import { getState, putState } from "./api/state";
+import { createTeam, listTeams } from "./api/teams";
 import { requireAuth, type AuthContext } from "./auth/session";
 import { errorResponse, HttpError, recordRequest, SECURITY_HEADERS, withHeaders } from "./core/http";
 import { readLegacy } from "./legacy/kv-migration";
@@ -64,18 +65,26 @@ async function routeAuthenticated(request: Request, env: Env, auth: AuthContext,
     if (request.method === "GET") return getClub(env, auth, decodeURIComponent(club[1]), requestId);
     return methodNotAllowed();
   }
+  const teams = path.match(/^\/api\/v1\/clubs\/([^/]+)\/teams$/u);
+  if (teams) {
+    const clubId = decodeURIComponent(teams[1]);
+    if (request.method === "GET") return listTeams(env, auth, clubId, requestId);
+    if (request.method === "POST") return createTeam(request, env, auth, clubId, requestId);
+    return methodNotAllowed();
+  }
+  const teamState = path.match(/^\/api\/v1\/clubs\/([^/]+)\/teams\/([^/]+)\/state$/u);
+  if (teamState) {
+    const clubId = decodeURIComponent(teamState[1]);
+    const teamId = decodeURIComponent(teamState[2]);
+    if (request.method === "GET") return getState(env, auth, clubId, teamId, requestId);
+    if (request.method === "PUT") return putState(request, env, auth, clubId, teamId, requestId);
+    return methodNotAllowed();
+  }
   const matches = path.match(/^\/api\/v1\/clubs\/([^/]+)\/matches$/u);
   if (matches) {
     const clubId = decodeURIComponent(matches[1]);
     if (request.method === "GET") return listMatches(request, env, auth, clubId, requestId);
     if (request.method === "POST") return createMatch(request, env, auth, clubId, requestId);
-    return methodNotAllowed();
-  }
-  const state = path.match(/^\/api\/v1\/clubs\/([^/]+)\/state$/u);
-  if (state) {
-    const clubId = decodeURIComponent(state[1]);
-    if (request.method === "GET") return getState(env, auth, clubId, requestId);
-    if (request.method === "PUT") return putState(request, env, auth, clubId, requestId);
     return methodNotAllowed();
   }
   const match = path.match(/^\/api\/v1\/clubs\/([^/]+)\/matches\/([^/]+)$/u);

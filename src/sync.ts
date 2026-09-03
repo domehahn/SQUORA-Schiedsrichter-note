@@ -1,11 +1,13 @@
 import { normalizeMatch, type MatchState, type SavedMatch } from "./match";
 import { sanitizeTournaments, type Tournament } from "./tournament";
 import { sanitizeTeams, type SavedTeam } from "./teams";
-import { isTenantMeta, type TenantMeta } from "./tenant";
+import { isTeamUnit, isTenantMeta, scopeKey, type TeamUnit, type TenantMeta } from "./tenant";
 
 const BASE = import.meta.env.BASE_URL ?? "/";
 const API = `${BASE}api/v1`;
-const stateUrl = (id: string) => `${API}/clubs/${encodeURIComponent(id)}/state`;
+const enc = encodeURIComponent;
+const teamsUrl = (clubId: string) => `${API}/clubs/${enc(clubId)}/teams`;
+const stateUrl = (clubId: string, teamId: string) => `${API}/clubs/${enc(clubId)}/teams/${enc(teamId)}/state`;
 const versions = new Map<string, number>();
 
 export type SyncState = "idle" | "syncing" | "synced" | "offline" | "error" | "conflict";
@@ -79,30 +81,50 @@ export async function createTenant(name: string): Promise<TenantMeta | null> {
   } catch { return null; }
 }
 
+export async function fetchTeams(clubId: string): Promise<TeamUnit[] | null> {
+  try {
+    const response = await fetch(teamsUrl(clubId), { headers: { Accept: "application/json" } });
+    if (!response.ok) return null;
+    const body = await response.json() as { teams?: unknown };
+    return Array.isArray(body.teams) ? body.teams.filter(isTeamUnit) : [];
+  } catch { return null; }
+}
+
+export async function createTeamUnit(clubId: string, name: string, ageGroup: string | null): Promise<TeamUnit | null> {
+  try {
+    const response = await fetch(teamsUrl(clubId), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, ...(ageGroup ? { ageGroup } : {}) }) });
+    if (!response.ok) return null;
+    const body = await response.json() as { team?: unknown };
+    return isTeamUnit(body.team) ? body.team : null;
+  } catch { return null; }
+}
+
 export type TenantFetch = { ok: true; data: CloudData } | { ok: false; reason: "empty" | "offline" | "decrypt" | "unauthorized" };
 
-export async function fetchTenantData(tenantId: string, _key?: CryptoKey): Promise<TenantFetch> {
+export async function fetchTenantData(clubId: string, teamId: string, _key?: CryptoKey): Promise<TenantFetch> {
+  const scope = scopeKey(clubId, teamId);
   try {
-    const response = await fetch(stateUrl(tenantId), { headers: { Accept: "application/json" } });
+    const response = await fetch(stateUrl(clubId, teamId), { headers: { Accept: "application/json" } });
     if (response.status === 401 || response.status === 403 || response.status === 404) return { ok: false, reason: "unauthorized" };
     if (!response.ok) return { ok: false, reason: "offline" };
     const body = await response.json() as Record<string, unknown>;
-    versions.set(tenantId, typeof body.version === "number" ? body.version : 0);
+    versions.set(scope, typeof body.version === "number" ? body.version : 0);
     return { ok: true, data: parseCloudData(body) };
   } catch { return { ok: false, reason: "offline" }; }
 }
 
-export async function pushTenantData(tenantId: string, _key: CryptoKey, data: CloudData): Promise<boolean> {
+export async function pushTenantData(clubId: string, teamId: string, _key: CryptoKey, data: CloudData): Promise<boolean> {
+  const scope = scopeKey(clubId, teamId);
   try {
-    const response = await fetch(stateUrl(tenantId), {
+    const response = await fetch(stateUrl(clubId, teamId), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ version: versions.get(tenantId) ?? 0, ...data }),
+      body: JSON.stringify({ version: versions.get(scope) ?? 0, ...data }),
     });
     if (response.status === 409) return false;
     if (!response.ok) return false;
     const body = await response.json() as { version?: unknown };
-    if (typeof body.version === "number") versions.set(tenantId, body.version);
+    if (typeof body.version === "number") versions.set(scope, body.version);
     return true;
   } catch { return false; }
 }

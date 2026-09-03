@@ -7,7 +7,7 @@ import { cue, unlockAudio } from "./notify";
 import { TenantGate } from "./TenantGate";
 import { ACTIVE_TENANT_KEY, SOUND_KEY } from "./localData";
 import { readEncryptedCache, writeEncryptedCache } from "./encryptedCache";
-import type { TenantMeta } from "./tenant";
+import { scopeKey, type TeamUnit, type TenantMeta } from "./tenant";
 import {
   applyDeletions,
   fetchTenantData,
@@ -113,12 +113,15 @@ interface Notice {
 
 interface AppProps {
   tenant: TenantMeta;
+  team: TeamUnit;
   cryptoKey: CryptoKey;
   onLock: () => void;
 }
 
-function App({ tenant, cryptoKey, onLock }: AppProps) {
+function App({ tenant, team, cryptoKey, onLock }: AppProps) {
   const tenantId = tenant.id;
+  const teamId = team.id;
+  const cacheScope = scopeKey(tenant.id, team.id);
   const [match, setMatch] = useState<MatchState>(createMatch);
   const [archive, setArchive] = useState<SavedMatch[]>([]);
   const [deletedIds, setDeletedIds] = useState<string[]>([]);
@@ -181,7 +184,7 @@ function App({ tenant, cryptoKey, onLock }: AppProps) {
   useEffect(() => {
     let cancelled = false;
     setSyncState("syncing");
-    Promise.all([readEncryptedCache(tenantId, cryptoKey), fetchTenantData(tenantId, cryptoKey)]).then(async ([cached, result]) => {
+    Promise.all([readEncryptedCache(cacheScope, cryptoKey), fetchTenantData(tenantId, teamId, cryptoKey)]).then(async ([cached, result]) => {
       if (cancelled) return;
       if (!result.ok) {
         if (cached) reconcile(cached);
@@ -195,8 +198,8 @@ function App({ tenant, cryptoKey, onLock }: AppProps) {
         reconcile(cached);
       }
       const merged = reconcile(result.data);
-      await writeEncryptedCache(tenantId, cryptoKey, merged);
-      const ok = await pushTenantData(tenantId, cryptoKey, merged);
+      await writeEncryptedCache(cacheScope, cryptoKey, merged);
+      const ok = await pushTenantData(tenantId, teamId, cryptoKey, merged);
       if (cancelled) return;
       setSyncState(ok ? "synced" : "offline");
       if (ok) setLastSyncedAt(Date.now());
@@ -213,13 +216,13 @@ function App({ tenant, cryptoKey, onLock }: AppProps) {
     setSyncState("syncing");
     const handle = window.setTimeout(async () => {
       const data = { archive, deletedIds, tournaments, teams, current: match };
-      await writeEncryptedCache(tenantId, cryptoKey, data);
-      const ok = await pushTenantData(tenantId, cryptoKey, data);
+      await writeEncryptedCache(cacheScope, cryptoKey, data);
+      const ok = await pushTenantData(tenantId, teamId, cryptoKey, data);
       setSyncState(ok ? "synced" : "error");
       if (ok) setLastSyncedAt(Date.now());
     }, 1500);
     return () => window.clearTimeout(handle);
-  }, [archive, deletedIds, tournaments, teams, match, tenantId, cryptoKey]);
+  }, [archive, deletedIds, tournaments, teams, match, tenantId, teamId, cacheScope, cryptoKey]);
 
   const inBreakPhase = match.phase === "halfTime" || match.phase === "extraBreak";
   useEffect(() => {
@@ -593,14 +596,14 @@ function App({ tenant, cryptoKey, onLock }: AppProps) {
 
   const syncNow = async () => {
     setSyncState("syncing");
-    const result = await fetchTenantData(tenantId, cryptoKey);
+    const result = await fetchTenantData(tenantId, teamId, cryptoKey);
     if (!result.ok) {
       setSyncState("error");
       flash(result.reason === "decrypt" ? "Entschlüsselung fehlgeschlagen" : "Synchronisierung fehlgeschlagen");
       return;
     }
     const merged = reconcile(result.data);
-    const ok = await pushTenantData(tenantId, cryptoKey, merged);
+    const ok = await pushTenantData(tenantId, teamId, cryptoKey, merged);
     setSyncState(ok ? "synced" : "error");
     if (ok) setLastSyncedAt(Date.now());
     flash(ok ? "Synchronisiert" : "Synchronisierung fehlgeschlagen");
@@ -760,8 +763,8 @@ function App({ tenant, cryptoKey, onLock }: AppProps) {
           <span><strong>SQUORA</strong><small>Schiedsrichter Note</small></span>
         </a>
         <div className="topbar-actions">
-          <button className="tenant-chip" onClick={() => { if (syncState === "synced" || window.confirm("Verein sperren? Nicht synchronisierte Änderungen bleiben lokal auf diesem Gerät.")) onLock(); }} title="Verein wechseln / sperren">
-            <Icon name="shield" /> <span>{tenant.name}</span>
+          <button className="tenant-chip" onClick={() => { if (syncState === "synced" || window.confirm("Mannschaft sperren? Nicht synchronisierte Änderungen bleiben lokal auf diesem Gerät.")) onLock(); }} title="Verein / Mannschaft wechseln · sperren">
+            <Icon name="shield" /> <span>{tenant.name} · {team.name}</span>
           </button>
           <button className="sound-toggle" aria-pressed={soundOn} title={soundOn ? "Signaltöne aus" : "Signaltöne an"} onClick={() => { unlockAudio(); setSoundOn((value) => !value); }}>
             <Icon name={soundOn ? "sound" : "mute"} />
@@ -1738,19 +1741,19 @@ function readActiveTenant(): string | null {
 }
 
 function Root() {
-  const [unlocked, setUnlocked] = useState<{ tenant: TenantMeta; key: CryptoKey } | null>(null);
+  const [unlocked, setUnlocked] = useState<{ tenant: TenantMeta; team: TeamUnit; key: CryptoKey } | null>(null);
 
   if (!unlocked) {
     return (
       <TenantGate
         rememberedId={readActiveTenant()}
-        onUnlock={(tenant, key) => {
+        onUnlock={(tenant, team, key) => {
           try {
-            localStorage.setItem(ACTIVE_TENANT_KEY, tenant.id);
+            localStorage.setItem(ACTIVE_TENANT_KEY, scopeKey(tenant.id, team.id));
           } catch {
             /* ignore */
           }
-          setUnlocked({ tenant, key });
+          setUnlocked({ tenant, team, key });
         }}
       />
     );
@@ -1758,8 +1761,9 @@ function Root() {
 
   return (
     <App
-      key={unlocked.tenant.id}
+      key={scopeKey(unlocked.tenant.id, unlocked.team.id)}
       tenant={unlocked.tenant}
+      team={unlocked.team}
       cryptoKey={unlocked.key}
       onLock={() => setUnlocked(null)}
     />

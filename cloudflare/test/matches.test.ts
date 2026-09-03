@@ -1,6 +1,6 @@
 import { env, SELF } from "cloudflare:test";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { CLUB_A, CLUB_B, MATCH_B, ORIGIN, jsonHeaders, matchBody, migrate, resetDb, seedTwoTenants } from "./helpers";
+import { CLUB_A, CLUB_B, MATCH_B, TEAM_A, TEAM_A2, TEAM_B, ORIGIN, jsonHeaders, matchBody, migrate, resetDb, seedTwoTenants } from "./helpers";
 
 describe("match isolation and optimistic locking", () => {
   beforeAll(migrate);
@@ -45,16 +45,38 @@ describe("match isolation and optimistic locking", () => {
     await expect(env.DB.prepare(`INSERT INTO match_events (club_id,id,match_id,event_type,match_ms,payload_json,created_at,updated_at) VALUES (?,?,?,?,0,'{}',?,?)`).bind(CLUB_A, crypto.randomUUID(), MATCH_B, "goal", now, now).run()).rejects.toThrow();
   });
 
-  it("guards whole-app synchronization by tenant and aggregate version", async () => {
+  it("guards whole-team synchronization by team and aggregate version", async () => {
     const { cookieA } = await seedTwoTenants();
     const payload = { version: 0, archive: [], deletedIds: [], tournaments: [], teams: [], current: null };
-    expect((await SELF.fetch(`${ORIGIN}/api/v1/clubs/${CLUB_A}/state`, { method: "PUT", headers: jsonHeaders(cookieA), body: JSON.stringify(payload) })).status).toBe(200);
-    expect((await SELF.fetch(`${ORIGIN}/api/v1/clubs/${CLUB_A}/state`, { method: "PUT", headers: jsonHeaders(cookieA), body: JSON.stringify(payload) })).status).toBe(409);
-    expect((await SELF.fetch(`${ORIGIN}/api/v1/clubs/${CLUB_B}/state`, { method: "PUT", headers: jsonHeaders(cookieA), body: JSON.stringify(payload) })).status).toBe(404);
+    const url = (club: string, team: string) => `${ORIGIN}/api/v1/clubs/${club}/teams/${team}/state`;
+    expect((await SELF.fetch(url(CLUB_A, TEAM_A), { method: "PUT", headers: jsonHeaders(cookieA), body: JSON.stringify(payload) })).status).toBe(200);
+    expect((await SELF.fetch(url(CLUB_A, TEAM_A), { method: "PUT", headers: jsonHeaders(cookieA), body: JSON.stringify(payload) })).status).toBe(409);
+    // sibling team D2 has its own independent version → still accepts version 0
+    expect((await SELF.fetch(url(CLUB_A, TEAM_A2), { method: "PUT", headers: jsonHeaders(cookieA), body: JSON.stringify(payload) })).status).toBe(200);
+    // foreign club's team → 404, never reachable
+    expect((await SELF.fetch(url(CLUB_B, TEAM_B), { method: "PUT", headers: jsonHeaders(cookieA), body: JSON.stringify(payload) })).status).toBe(404);
+    // unknown team id within own club → 404
+    expect((await SELF.fetch(url(CLUB_A, "aaaaaaaa-9999-4999-8999-aaaaaaaaaaaa"), { headers: { Cookie: cookieA } })).status).toBe(404);
+  });
+
+  it("keeps each team's live match / clock and archive separate", async () => {
+    const { cookieA } = await seedTwoTenants();
+    const url = (team: string) => `${ORIGIN}/api/v1/clubs/${CLUB_A}/teams/${team}/state`;
+    const draft = (team: string, running: number) => ({
+      version: 0, archive: [], deletedIds: [], tournaments: [], teams: [],
+      current: { id: `${team.slice(0, 8)}-2222-4222-8222-${team.slice(-12)}`, phase: "live", runningSince: running, events: [] },
+    });
+    await SELF.fetch(url(TEAM_A), { method: "PUT", headers: jsonHeaders(cookieA), body: JSON.stringify(draft(TEAM_A, 1000)) });
+    await SELF.fetch(url(TEAM_A2), { method: "PUT", headers: jsonHeaders(cookieA), body: JSON.stringify(draft(TEAM_A2, 9999)) });
+    const d1 = await (await SELF.fetch(url(TEAM_A), { headers: { Cookie: cookieA } })).json<{ current: { runningSince: number } }>();
+    const d2 = await (await SELF.fetch(url(TEAM_A2), { headers: { Cookie: cookieA } })).json<{ current: { runningSince: number } }>();
+    expect(d1.current.runningSince).toBe(1000);
+    expect(d2.current.runningSince).toBe(9999);
   });
 
   it("removes non-whitelisted sensitive roster metadata before persistence", async () => {
     const { cookieA } = await seedTwoTenants();
+    const url = `${ORIGIN}/api/v1/clubs/${CLUB_A}/teams/${TEAM_A}/state`;
     const teamId = crypto.randomUUID();
     const playerId = crypto.randomUUID();
     const payload = {
@@ -62,9 +84,8 @@ describe("match isolation and optimistic locking", () => {
       archive: [], tournaments: [], current: null,
       teams: [{ id: teamId, name: "Synthetic team", roster: [{ id: playerId, name: "Max Testspieler", number: "7", pass: "0100-0001", birthdate: "01.01.2014" }] }],
     };
-    expect((await SELF.fetch(`${ORIGIN}/api/v1/clubs/${CLUB_A}/state`, { method: "PUT", headers: jsonHeaders(cookieA), body: JSON.stringify(payload) })).status).toBe(200);
-    const response = await SELF.fetch(`${ORIGIN}/api/v1/clubs/${CLUB_A}/state`, { headers: { Cookie: cookieA } });
-    const text = await response.text();
+    expect((await SELF.fetch(url, { method: "PUT", headers: jsonHeaders(cookieA), body: JSON.stringify(payload) })).status).toBe(200);
+    const text = await (await SELF.fetch(url, { headers: { Cookie: cookieA } })).text();
     expect(text).toContain("Max Testspieler");
     expect(text).not.toContain("0100-0001");
     expect(text).not.toContain("01.01.2014");
