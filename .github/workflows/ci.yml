@@ -66,6 +66,28 @@ jobs:
           path: playwright-report
           retention-days: 7
 
+  e2e-worker:
+    name: End-to-end against the real Worker (wrangler dev + D1)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+      - name: Run Worker+D1 browser suite
+        run: npm run test:e2e:worker
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-worker
+          path: playwright-report
+          retention-days: 7
+
   security:
     name: Dependency & secret scan
     runs-on: ubuntu-latest

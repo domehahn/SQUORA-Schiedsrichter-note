@@ -37,6 +37,7 @@
     "development": {
       "name": "schiedsrichter-note-web-development",
       "workers_dev": true,
+      "routes": [],
       "d1_databases": [
         { "binding": "DB", "database_name": "schiedsrichter-note-development", "database_id": "1b56a7b7-90ad-4235-bcd8-4f80ef8756fb", "migrations_dir": "migrations" }
       ],

@@ -6,10 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "oxlint src",
+    "lint": "oxlint src cloudflare tests",
     "test:unit": "vitest run --config vitest.unit.config.ts",
     "test:worker": "vitest run",
     "test:e2e": "playwright test",
+    "test:e2e:worker": "playwright test --config playwright.worker.config.ts",
     "test": "npm run test:unit && npm run test:worker",
     "preview": "vite preview",
     "web:types": "wrangler types --include-runtime false",
