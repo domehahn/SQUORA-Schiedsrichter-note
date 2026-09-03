@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  quality:
+    name: Typecheck, lint, unit & worker tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Typecheck (worker)
+        run: npm run web:typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Build (tsc -b + vite)
+        run: npm run build
+      - name: Unit tests
+        run: npm run test:unit
+      - name: Worker tests (Miniflare + D1 migrations)
+        run: npm run test:worker
+      - name: Upload build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+          retention-days: 7
+
+  e2e:
+    name: End-to-end (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+      - name: Run e2e suite
+        run: npm run test:e2e
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report
+          retention-days: 7
+
+  security:
+    name: Dependency & secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: npm audit (advisory)
+        run: npm audit --audit-level=high
+        continue-on-error: true
+      - name: Guard against committed secrets
+        run: |
+          set -uo pipefail
+          hits=$(git grep -nEI \
+            -e 'AUTH_PASSWORD_HASH=[^$]|SESSION_SECRET=[^$]|AUTH_USERS=\[' \
+            -e 'pbkdf2-sha256\$[0-9]+\$[0-9a-f]{16,}' \
+            -e '-----BEGIN [A-Z ]*PRIVATE KEY-----' \
+            -- ':!*.test.ts' ':!cloudflare/test/**' ':!vitest*.config.ts' ':!.github/workflows/**' \
+            | grep -vaE 'DUMMY_HASH|TEST_PASSWORD_HASH|synthetic|@example\.(com|invalid)|0100-0000' || true)
+          if [ -n "$hits" ]; then
+            echo "$hits"
+            echo "::error::Potential secret or credential material committed to the repository."
+            exit 1
+          fi
+          echo "No obvious secret material found in tracked files."
+
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+      - uses: github/codeql-action/analyze@v3
