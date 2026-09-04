@@ -77,12 +77,38 @@ export async function readJson(request: Request, maxBytes = 1_048_576): Promise<
   }
 }
 
+const UUID_SEGMENT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+// Invitation and live-share tokens are 256-bit random, base64url-encoded —
+// long, opaque, and (unlike a UUID) carry no dashes. Any path segment that
+// long and token-shaped is a bearer credential and must never reach logs.
+const TOKEN_LIKE_SEGMENT = /^[A-Za-z0-9_-]{20,}$/u;
+
+/**
+ * Turns a request path into a log-safe route template: real IDs and — most
+ * importantly — raw invitation/live-share bearer tokens are replaced with a
+ * placeholder, so `recordRequest` never writes a secret or a fine-grained
+ * identifier into request logs. `/api/v1/live/<token>` becomes
+ * `/api/v1/live/:token`, `/api/v1/clubs/<uuid>/teams/<uuid>` becomes
+ * `/api/v1/clubs/:id/teams/:id`, etc.
+ */
+export function canonicalRoute(pathname: string): string {
+  return pathname
+    .split("/")
+    .map((segment) => {
+      if (!segment) return segment;
+      if (UUID_SEGMENT.test(segment)) return ":id";
+      if (TOKEN_LIKE_SEGMENT.test(segment)) return ":token";
+      return segment;
+    })
+    .join("/");
+}
+
 export function recordRequest(startedAt: number, request: Request, response: Response, context: RequestLogContext): void {
   console.log(JSON.stringify({
     requestId: context.requestId,
     userId: context.userId,
     clubId: context.clubId,
-    route: new URL(request.url).pathname,
+    route: canonicalRoute(new URL(request.url).pathname),
     method: request.method,
     status: response.status,
     durationMs: Date.now() - startedAt,
