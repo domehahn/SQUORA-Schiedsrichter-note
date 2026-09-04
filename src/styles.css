@@ -209,14 +209,16 @@ input:disabled, select:disabled { color: #6a7687; background: #f4f6f9; }
 .roster-col .text-button { padding: 8px 6px; }
 .roster-actions { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 6px; }
 
-.roster-table { width: 100%; min-width: 440px; border-collapse: collapse; font-size: 12px; }
+.roster-table { width: 100%; min-width: 520px; border-collapse: collapse; font-size: 12px; }
 .roster-table th { text-align: left; padding: 6px 8px; background: #f7fafd; color: #64748b; font-size: 9px; text-transform: uppercase; letter-spacing: .08em; font-weight: 800; border-bottom: 1px solid #e2e8f1; white-space: nowrap; }
 .roster-table td { padding: 4px 6px; border-bottom: 1px solid #eef2f6; }
 .roster-table input, .roster-table select { width: 100%; min-height: 36px; font-size: 13px; padding: 6px 8px; }
 .roster-table .roster-num { width: 46px; text-align: center; font-variant-numeric: tabular-nums; }
 .roster-table td:has(.roster-name) { width: auto; min-width: 130px; }
-.roster-table .roster-pass { width: 92px; }
-.roster-table .roster-birth { width: 104px; }
+.roster-table .roster-pass { width: 130px; font-variant-numeric: tabular-nums; }
+.roster-table .roster-birth { width: 138px; font-variant-numeric: tabular-nums; }
+.roster-table td:has(.roster-pass) { width: 130px; }
+.roster-table td:has(.roster-birth) { width: 138px; }
 .roster-table td:has(.status-chip) { width: 168px; }
 .status-chip { display: inline-flex; border: 1px solid #d7dfe9; border-radius: 999px; overflow: hidden; background: #fff; }
 .status-seg { border: 0; background: transparent; padding: 6px 9px; min-height: 32px; font-size: 10px; font-weight: 800; color: #8391a3; cursor: pointer; white-space: nowrap; }

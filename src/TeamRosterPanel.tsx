@@ -133,8 +133,8 @@ export function TeamRosterPanel({ clubId, teamId, teamName, onCopyToLibrary, onC
                 <tr key={player.id}>
                   <td><input className="roster-num" inputMode="numeric" maxLength={8} defaultValue={player.shirtNumber ?? ""} onBlur={(event) => void saveField(player, { shirtNumber: event.target.value })} /></td>
                   <td><input className="roster-name" maxLength={120} defaultValue={player.name} onBlur={(event) => void saveField(player, { name: event.target.value })} /></td>
-                  <td><input className="roster-num" maxLength={40} defaultValue={player.passNumber ?? ""} onBlur={(event) => void saveField(player, { passNumber: event.target.value })} /></td>
-                  <td><input className="roster-num" inputMode="numeric" maxLength={12} placeholder="TT.MM.JJJJ" defaultValue={player.birthdate ?? ""} onBlur={(event) => void saveField(player, { birthdate: event.target.value })} /></td>
+                  <td><input className="roster-pass" maxLength={40} defaultValue={player.passNumber ?? ""} onBlur={(event) => void saveField(player, { passNumber: event.target.value })} /></td>
+                  <td><input className="roster-birth" inputMode="numeric" maxLength={12} placeholder="TT.MM.JJJJ" defaultValue={player.birthdate ?? ""} onBlur={(event) => void saveField(player, { birthdate: event.target.value })} /></td>
                   <td><button className="mini-icon danger" aria-label={`${player.name} entfernen`} onClick={() => void removePlayer(player)}><Icon name="trash" /></button></td>
                 </tr>
               ))}
