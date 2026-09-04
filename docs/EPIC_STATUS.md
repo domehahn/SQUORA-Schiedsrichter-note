@@ -1,7 +1,7 @@
 # CODEX EPIC — implementation status
 
 Audit of the 47-epic production-readiness brief against `main` at commit
-`9742ec8`. Legend: **done** shipped and tested · **partial** core in place,
+`1d804d2`. Legend: **done** shipped and tested · **partial** core in place,
 gaps noted · **open** not started.
 
 | Epic | Status | Evidence / gap |
@@ -23,13 +23,13 @@ gaps noted · **open** not started.
 | 14 — API versioning | done | All routes under `/api/v1/`. |
 | 15 — BOLA / IDOR | done | `cloudflare/test/{tenant,matches,teams}.test.ts` — foreign club/match/team → 404; foreign update/delete → 404. |
 | 16 — Database integrity | done | Composite PKs `(club_id, id)`, composite FKs `(club_id, team_id) → teams`, `CHECK`, `UNIQUE (club_id, external_id)`. |
-| 17 — Optimistic locking | done | `version` on `matches/tournaments/teams`; `team_sync_versions` aggregate; 409 `VERSION_CONFLICT`; rollback on batch failure. |
+| 17 — Optimistic locking | done | `version` on `matches/tournaments/teams`; `team_sync_versions` aggregate; 409 `VERSION_CONFLICT`. The version bump and the data write run in **one** `DB.batch()` transaction with `abortBatchUnlessOneChange` — `putState` and `updateMatch` are atomic under truly parallel writers (`security/concurrency.test.ts`). |
 | 18 — Audit logging | done | Emitted and tested: auth/session, club/team/state/match, DFBnet, legacy migration, membership invite/role/status/removal, export and deletion actions. |
 | 19 — Observability | done | `recordRequest` structured line (requestId, userId, clubId, route, status, durationMs); `X-Request-Id` header; `wrangler.jsonc` observability on. |
 | 20 — Error handling | done | `HttpError` → `{ error: { code, message }, requestId }`; internal detail only via `console.error`. |
 | 21 — Backup & recovery | done | Time Travel + export runbook; staged marker/restore rehearsal completed 2026-09-04 in under 2 minutes with all migrations intact. |
-| 22 — Data retention & GDPR | partial | `docs/privacy/*` written. `GET /clubs/:id/export`, `DELETE /clubs/:id` (owner + name-confirm, cascade), `DELETE /api/v1/me` (tombstone + session revoke + solely-owned-club purge) implemented and tested. Retention *jobs* (rolling cleanup, 30-day club grace) still policy-only. |
-| 23 — CI/CD | done | `.github/workflows/ci.yml` — quality, e2e, security (npm audit, secret grep), CodeQL. |
+| 22 — Data retention & GDPR | partial | `docs/privacy/*` written. Export / club-delete / account-tombstone implemented and tested. A daily cron (`services/retention.ts` via `triggers.crons`) now purges expired sessions and trims `audit_log` (24 mo) / `dfbnet_imports` (12 mo); `services/alerting.ts` posts a threshold self-check to `ALERT_WEBHOOK_URL`. Still policy-only: season-based match cleanup, 30-day club grace, weekly logical export. |
+| 23 — CI/CD | done | `.github/workflows/ci.yml` — quality, e2e, e2e-worker, security (`npm audit --audit-level=high` hard-fails), CodeQL. `main` branch protection requires all 5 checks + strict up-to-date + linear history; `enforce_admins:false` as an escape hatch. |
 | 24 — E2E against real Worker | done | `tests/worker/` Playwright suite runs against `wrangler dev --local` + local D1 (`playwright.worker.config.ts`, global-setup seeds a throwaway DB). CI job `e2e-worker`. Covers login, `/me`, session survival + logout, cross-tenant 404. |
 | 25 — Security test suite | done | `cloudflare/test/security/{csrf,session,bola,rbac,concurrency,rate-limit}.test.ts` run in the `test:worker` merge gate. |
 | 26 — Environments | done | `wrangler.jsonc` `env.development` (`routes:[]`) / `env.staging` / top-level production, separate D1 + three rate-limiter namespaces each. |
@@ -37,8 +37,8 @@ gaps noted · **open** not started.
 | 28 — Rate limiting | done | `LOGIN` (10/60s), `EXPORT` (5/60s), `IMPORT` (20/60s) limiters; `core/rate-limit.ts` folds IP + account + tenant + endpoint into one composite key. `rate-limit.test.ts` proves export throttling. |
 | 29 — Security headers | done | `SECURITY_HEADERS` + CSP without `unsafe-inline` (`script-src 'self'`), HSTS, COOP/COEP/CORP, Permissions-Policy, `frame-ancestors 'none'`. |
 | 30 — Service worker security | done | Vite PWA `NetworkOnly` for `/api/*` and `/auth/*`; `verify-service-worker.mjs` asserts generated output and runs in CI. |
-| 31 — Import / export hardening | partial | `core/validation.ts` strict validators, bounded `readJson`, `boundedJson`. No shared schema layer (Zod-equivalent) across all endpoints. |
-| 32 — Repository architecture | partial | Worker split into layers. `src/App.tsx` remains large. |
+| 31 — Import / export hardening | partial | `core/validation.ts` now has a declarative `parseBody(value, spec)` that rejects undeclared fields (422 `UNKNOWN_FIELD`); adopted in createTeam / createClub / deleteClub / deleteAccount. Snapshot endpoints still on the primitives — incremental rollout. |
+| 32 — Repository architecture | partial | Worker split into layers. `src/App.tsx` shrinking — `RosterEditor` extracted; TournamentPanel / TeamLibraryPanel / StatsPanel next. |
 | 33 — Legacy KV migration | done | Explicit opt-in UI plus authenticated list/read/migrate API; source fingerprint verification, idempotency, D1 marker and audits; source remains intact. |
 | 34 — Tenant-model migration | done | `legacy_migrations` stores verified `user + legacyTenantId → club + team`; foreign targets and remapping are rejected and tested. |
 | 35 — Repository security | done | CI secret guard; no secrets tracked; fixtures synthetic. |
