@@ -33,6 +33,18 @@ describe("security · RBAC", () => {
     expect((await SELF.fetch(`${ORIGIN}/api/v1/clubs/${CLUB_A}`, { method: "DELETE", headers: jsonHeaders(cookieA), body: JSON.stringify({ confirm: "Club A Test" }) })).status).toBe(403);
   });
 
+  it("hides the club-wide match endpoints from a team-scoped membership", async () => {
+    const { cookieA } = await seedTwoTenants();
+    await env.DB.prepare("UPDATE memberships SET team_id=?, role='referee_manager' WHERE club_id=? AND user_id=?").bind(TEAM_A, CLUB_A, USER_A).run();
+    // team-scoped -> the flat club match endpoints are invisible (404)
+    expect((await SELF.fetch(`${ORIGIN}/api/v1/clubs/${CLUB_A}/matches`, { headers: { Cookie: cookieA } })).status).toBe(404);
+    expect((await SELF.fetch(`${ORIGIN}/api/v1/clubs/${CLUB_A}/matches`, { method: "POST", headers: jsonHeaders(cookieA), body: JSON.stringify(matchBody()) })).status).toBe(404);
+    // export is already gated by club.manage (403 for this role), and belt-and-suspenders denyTeamScoped
+    expect([403, 404]).toContain((await SELF.fetch(`${ORIGIN}/api/v1/clubs/${CLUB_A}/export`, { headers: { Cookie: cookieA } })).status);
+    // the team-scoped route this member should use still works
+    expect((await SELF.fetch(`${ORIGIN}/api/v1/clubs/${CLUB_A}/teams/${TEAM_A}/state`, { headers: { Cookie: cookieA } })).status).toBe(200);
+  });
+
   it("only the club_owner may delete the club, not a club_admin", async () => {
     const { cookieA } = await seedTwoTenants();
     await setRole("club_admin");

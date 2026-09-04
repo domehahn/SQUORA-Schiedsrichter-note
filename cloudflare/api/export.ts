@@ -1,7 +1,7 @@
 import type { AuthContext } from "../auth/session";
 import { json } from "../core/http";
 import { clientIp, enforceRateLimit } from "../core/rate-limit";
-import { requireTenantAccess } from "../middleware/tenant";
+import { denyTeamScoped, requireTenantAccess } from "../middleware/tenant";
 import { writeAudit } from "../services/audit-service";
 
 const SCHEMA_VERSION = 1;
@@ -13,6 +13,7 @@ const SCHEMA_VERSION = 1;
  */
 export async function exportClub(request: Request, env: Env, auth: AuthContext, clubId: string, requestId: string): Promise<Response> {
   const context = await requireTenantAccess(env.DB, auth, clubId, "club.manage");
+  denyTeamScoped(context);
   await enforceRateLimit(env.EXPORT_RATE_LIMITER, [clientIp(request), auth.userId, context.clubId, "export"]);
   const club = context.clubId;
 

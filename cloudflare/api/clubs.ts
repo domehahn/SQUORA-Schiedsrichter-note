@@ -3,7 +3,7 @@ import { ROLE_PERMISSIONS, type Role } from "../auth/roles";
 import { HttpError, json, readJson, requireSameOrigin } from "../core/http";
 import { newId } from "../core/id";
 import { objectValue, stringValue } from "../core/validation";
-import { requireTenantAccess } from "../middleware/tenant";
+import { denyTeamScoped, requireTenantAccess } from "../middleware/tenant";
 import { purgeClub } from "../services/club-deletion";
 import { writeAudit } from "../services/audit-service";
 
@@ -62,6 +62,7 @@ export async function getClub(env: Env, auth: AuthContext, clubId: string, reque
 export async function deleteClub(request: Request, env: Env, auth: AuthContext, clubId: string, requestId: string): Promise<Response> {
   requireSameOrigin(request);
   const context = await requireTenantAccess(env.DB, auth, clubId, "club.manage");
+  denyTeamScoped(context);
   if (context.role !== "club_owner") throw new HttpError(403, "PERMISSION_DENIED", "Only the club owner can delete the club.");
   const club = await env.DB.prepare("SELECT name FROM clubs WHERE id=?").bind(context.clubId).first<{ name: string }>();
   if (!club) throw new HttpError(404, "NOT_FOUND", "The requested resource was not found.");

@@ -3,7 +3,7 @@ import { HttpError, json, readJson, requireSameOrigin } from "../core/http";
 import { isId, newId } from "../core/id";
 import { boundedJson, integerValue, objectValue, stringValue } from "../core/validation";
 import { abortBatchUnlessOneChange, versionConflictOr } from "../core/optimistic";
-import { requireTenantAccess } from "../middleware/tenant";
+import { denyTeamScoped, requireTenantAccess } from "../middleware/tenant";
 import { writeAudit } from "../services/audit-service";
 
 interface MatchInput {
@@ -55,6 +55,7 @@ function encodeCursor(date: string, id: string): string {
 
 export async function listMatches(request: Request, env: Env, auth: AuthContext, clubId: string, requestId: string): Promise<Response> {
   const context = await requireTenantAccess(env.DB, auth, clubId, "matches.read");
+  denyTeamScoped(context);
   const url = new URL(request.url);
   const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 50) || 50, 1), 100);
   const cursor = cursorValue(url.searchParams.get("cursor"));
@@ -72,6 +73,7 @@ export async function listMatches(request: Request, env: Env, auth: AuthContext,
 
 export async function getMatch(env: Env, auth: AuthContext, clubId: string, matchId: string, requestId: string): Promise<Response> {
   const context = await requireTenantAccess(env.DB, auth, clubId, "matches.read");
+  denyTeamScoped(context);
   if (!isId(matchId)) throw new HttpError(404, "NOT_FOUND", "The requested resource was not found.");
   const match = await env.DB.prepare(`SELECT id,match_date AS matchDate,competition,venue,state,payload_json AS payloadJson,version,created_at AS createdAt,updated_at AS updatedAt
     FROM matches WHERE club_id=? AND id=? AND deleted_at IS NULL`).bind(context.clubId, matchId).first<Record<string, unknown> & { payloadJson: string }>();
@@ -84,6 +86,7 @@ export async function getMatch(env: Env, auth: AuthContext, clubId: string, matc
 export async function createMatch(request: Request, env: Env, auth: AuthContext, clubId: string, requestId: string): Promise<Response> {
   requireSameOrigin(request);
   const context = await requireTenantAccess(env.DB, auth, clubId, "matches.create");
+  denyTeamScoped(context);
   const input = parseInput(await readJson(request, 1_048_576));
   const id = newId();
   const now = new Date().toISOString();
@@ -108,6 +111,7 @@ async function ensureMatch(env: Env, clubId: string, matchId: string): Promise<{
 export async function updateMatch(request: Request, env: Env, auth: AuthContext, clubId: string, matchId: string, requestId: string): Promise<Response> {
   requireSameOrigin(request);
   const context = await requireTenantAccess(env.DB, auth, clubId, "matches.update");
+  denyTeamScoped(context);
   await ensureMatch(env, context.clubId, matchId);
   const body = objectValue(await readJson(request, 1_048_576));
   const expectedVersion = integerValue(body, "version", { min: 1, max: 2_147_483_647 });
@@ -135,6 +139,7 @@ export async function updateMatch(request: Request, env: Env, auth: AuthContext,
 export async function deleteMatch(request: Request, env: Env, auth: AuthContext, clubId: string, matchId: string, requestId: string): Promise<Response> {
   requireSameOrigin(request);
   const context = await requireTenantAccess(env.DB, auth, clubId, "matches.delete");
+  denyTeamScoped(context);
   await ensureMatch(env, context.clubId, matchId);
   const body = objectValue(await readJson(request, 4096));
   const version = integerValue(body, "version", { min: 1, max: 2_147_483_647 });
