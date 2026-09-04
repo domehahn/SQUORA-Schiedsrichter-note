@@ -11,14 +11,21 @@ describe("match isolation and optimistic locking", () => {
     await env.DB.prepare(`INSERT INTO matches (club_id,id,match_date,competition,venue,state,payload_json,version,created_at,updated_at) VALUES (?,?,?,'Synthetic','','setup','{}',1,?,?)`).bind(CLUB_B, MATCH_B, "2026-09-03", now, now).run();
   }
 
-  it("creates and reads only within the authorized club", async () => {
+  it("creates and reads only within the authorized club, persisting team_id", async () => {
     const { cookieA } = await seedTwoTenants();
     const created = await SELF.fetch(`${ORIGIN}/api/v1/clubs/${CLUB_A}/matches`, { method: "POST", headers: jsonHeaders(cookieA), body: JSON.stringify(matchBody()) });
     expect(created.status).toBe(201);
     const id = (await created.json<{ match: { id: string } }>()).match.id;
-    expect((await SELF.fetch(`${ORIGIN}/api/v1/clubs/${CLUB_A}/matches/${id}`, { headers: { Cookie: cookieA } })).status).toBe(200);
+    const read = await (await SELF.fetch(`${ORIGIN}/api/v1/clubs/${CLUB_A}/matches/${id}`, { headers: { Cookie: cookieA } })).json<{ match: { teamId: string } }>();
+    expect(read.match.teamId).toBe(TEAM_A);
     const list = await SELF.fetch(`${ORIGIN}/api/v1/clubs/${CLUB_A}/matches?limit=1`, { headers: { Cookie: cookieA } });
     expect((await list.json<{ matches: unknown[] }>()).matches).toHaveLength(1);
+  });
+
+  it("rejects a match create/update whose team belongs to another club", async () => {
+    const { cookieA } = await seedTwoTenants();
+    const res = await SELF.fetch(`${ORIGIN}/api/v1/clubs/${CLUB_A}/matches`, { method: "POST", headers: jsonHeaders(cookieA), body: JSON.stringify(matchBody(undefined, TEAM_B)) });
+    expect(res.status).toBe(422);
   });
 
   it("returns 404 for foreign match reads, updates and deletes", async () => {

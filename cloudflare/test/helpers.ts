@@ -68,6 +68,6 @@ export function jsonHeaders(cookie: string): Record<string, string> {
   return { Cookie: cookie, Origin: ORIGIN, "Content-Type": "application/json" };
 }
 
-export function matchBody(version?: number): Record<string, unknown> {
-  return { ...(version ? { version } : {}), matchDate: "2026-09-03", competition: "Synthetic test league", venue: "Test venue", state: "setup", payload: { homeTeam: "A", awayTeam: "B" }, events: [] };
+export function matchBody(version?: number, teamId: string = TEAM_A): Record<string, unknown> {
+  return { ...(version ? { version } : {}), teamId, matchDate: "2026-09-03", competition: "Synthetic test league", venue: "Test venue", state: "setup", payload: { homeTeam: "A", awayTeam: "B" }, events: [] };
 }
