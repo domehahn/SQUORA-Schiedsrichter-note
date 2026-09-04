@@ -9,7 +9,7 @@ import { putState } from "./state";
 
 const LEGACY_ID = /^[A-Za-z0-9_-]{1,64}$/u;
 
-interface LegacyMeta { id: string; name?: string }
+interface LegacyMeta { id: string; name?: string; salt?: string; verifierIv?: string; verifier?: string }
 
 function legacyPrefix(auth: AuthContext): string {
   return `note:${auth.email.toLowerCase()}`;
@@ -36,7 +36,13 @@ async function source(env: Env, auth: AuthContext, legacyTenantId: string): Prom
 export async function listLegacyTenants(env: Env, auth: AuthContext, requestId: string): Promise<Response> {
   const entries = await legacyIndex(env, auth);
   const archiveExists = Boolean(env.LEGACY_DATA && await env.LEGACY_DATA.get(legacyPrefix(auth)));
-  return json({ tenants: entries.map((entry) => ({ id: entry.id, name: typeof entry.name === "string" ? entry.name.slice(0, 120) : "Legacy-Verein" })), archiveExists }, requestId);
+  return json({ tenants: entries.map((entry) => ({
+    id: entry.id,
+    name: typeof entry.name === "string" ? entry.name.slice(0, 120) : "Legacy-Verein",
+    salt: typeof entry.salt === "string" ? entry.salt.slice(0, 64) : "",
+    verifierIv: typeof entry.verifierIv === "string" ? entry.verifierIv.slice(0, 64) : "",
+    verifier: typeof entry.verifier === "string" ? entry.verifier.slice(0, 256) : "",
+  })), archiveExists }, requestId);
 }
 
 export async function readLegacyPayload(env: Env, auth: AuthContext, legacyTenantId: string, requestId: string): Promise<Response> {
@@ -99,4 +105,3 @@ export async function migrateLegacy(request: Request, env: Env, auth: AuthContex
     throw error;
   }
 }
-

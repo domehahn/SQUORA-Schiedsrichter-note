@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { deriveKey, fromBase64 } from "./crypto";
 import { hasEncryptedCache, readEncryptedCache, writeEncryptedCache } from "./encryptedCache";
 import { Icon } from "./icons";
+import { LegacyMigrationPanel } from "./LegacyMigrationPanel";
 import { ageGroups } from "./match";
 import {
   createTeamUnit,
@@ -256,6 +257,7 @@ export function TenantGate({ rememberedId, onUnlock }: Props) {
             <button className="tenant-primary" disabled={busy}><Icon name="check" /> Öffnen</button>
             <button type="button" className="tenant-link" onClick={() => { setWantOffline(true); setError(null); }}><Icon name="download" /> Offline-Nutzung einrichten</button>
           </>}
+          {club && team && <LegacyMigrationPanel club={club} team={team} />}
           <button type="button" className="tenant-link" onClick={() => { setError(null); setStep(teams.length > 1 ? "team" : "club"); }}>{teams.length > 1 ? "Mannschaft wechseln" : "Verein / Mannschaft wechseln"}</button>
         </>}
       </form>

@@ -149,3 +149,49 @@ export async function fetchLegacy(): Promise<CloudData | null> {
     return data.archive.length || data.tournaments.length || data.teams.length || data.current ? data : null;
   } catch { return null; }
 }
+
+export interface LegacyTenantSource {
+  id: string;
+  name: string;
+  salt: string;
+  verifierIv: string;
+  verifier: string;
+}
+
+export async function fetchLegacyTenantSources(): Promise<LegacyTenantSource[]> {
+  try {
+    const response = await fetch(`${API}/legacy/tenants`, { headers: { Accept: "application/json" } });
+    if (!response.ok) return [];
+    const body = await response.json() as { tenants?: unknown };
+    if (!Array.isArray(body.tenants)) return [];
+    return body.tenants.filter((entry): entry is LegacyTenantSource => {
+      const source = entry as Partial<LegacyTenantSource>;
+      return Boolean(source && typeof source.id === "string" && typeof source.name === "string" && typeof source.salt === "string" && typeof source.verifierIv === "string" && typeof source.verifier === "string");
+    });
+  } catch { return []; }
+}
+
+export async function fetchLegacyTenantPayload(id: string): Promise<{ sourceFingerprint: string; payload: { iv: string; ciphertext: string } } | null> {
+  try {
+    const response = await fetch(`${API}/legacy/tenants/${enc(id)}/payload`, { headers: { Accept: "application/json" } });
+    if (!response.ok) return null;
+    const body = await response.json() as { sourceFingerprint?: unknown; payload?: { iv?: unknown; ciphertext?: unknown } };
+    return typeof body.sourceFingerprint === "string" && typeof body.payload?.iv === "string" && typeof body.payload.ciphertext === "string"
+      ? { sourceFingerprint: body.sourceFingerprint, payload: { iv: body.payload.iv, ciphertext: body.payload.ciphertext } }
+      : null;
+  } catch { return null; }
+}
+
+export async function migrateLegacyTenant(clubId: string, teamId: string, legacyTenantId: string, sourceFingerprint: string, data: CloudData): Promise<boolean> {
+  const scope = `${clubId}:${teamId}`;
+  try {
+    const response = await fetch(`${API}/clubs/${enc(clubId)}/teams/${enc(teamId)}/migrations/legacy`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ legacyTenantId, sourceFingerprint, data: { version: versions.get(scope) ?? 0, ...data } }),
+    });
+    if (!response.ok) return false;
+    versions.delete(scope);
+    return true;
+  } catch { return false; }
+}
