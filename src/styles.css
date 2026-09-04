@@ -625,9 +625,16 @@ label:not(.tenant-check):not(.checkbox-field):not(.team):has(select:focus) > spa
   .roster-editor { grid-template-columns: 1fr; gap: 22px; }
   .team-picker, .sanction-grid { grid-template-columns: 1fr; gap: 16px; }
   .shootout-row strong { min-width: 84px; }
-  .tenant-chip { max-width: 96px; padding: 6px 7px; font-size: 10px; }
+  .tenant-chip { max-width: 46px; padding: 6px 6px; font-size: 10px; }
   .tenant-chip svg { width: 13px; }
-  .topbar-actions { gap: 6px; }
+  .topbar-actions { gap: 4px; }
+  .brand small { display: none; }
+  .brand img { width: 32px; height: 32px; }
+  .save-status { padding: 5px; }
+  .sound-toggle { width: 36px; height: 36px; }
+  /* Kept at the 44px Apple HIG minimum touch target despite the tight fit —
+     savings come from elsewhere (brand, tenant-chip, gaps) instead. */
+  .logout-button { width: 44px; height: 44px; }
   .tenant-card { padding: 24px 20px; }
   .clock-controls button { flex: 1 1 128px; }
   .pen-badge { font-size: 10px; }
