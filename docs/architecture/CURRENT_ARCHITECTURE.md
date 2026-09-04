@@ -20,7 +20,10 @@ A `scheduled` handler runs daily (`triggers.crons`): retention cleanup
 ## Authentication & sessions
 
 - D1 `users` is authoritative; the production account exists only in D1 (no
-  runtime credential secret). Passwords are PBKDF2-SHA256, 600 000 iterations.
+  runtime credential secret). Passwords are hashed with PBKDF2-SHA256 as 6
+  chained rounds of 100 000 (the Workers runtime rejects a single PBKDF2 call
+  above 100 000) ≈ 600 000 iterations of work; format
+  `pbkdf2-sha256$100000*6$<salt>$<hash>`.
 - Login → a random 256-bit session token; only `SHA-256(token)` is stored in
   `sessions`. Cookie `HttpOnly; Secure; SameSite=Strict`, 8 h expiry.
 - Sessions are individually and bulk revocable. `optionalAuth` re-checks
