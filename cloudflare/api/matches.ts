@@ -2,6 +2,7 @@ import type { AuthContext } from "../auth/session";
 import { HttpError, json, readJson, requireSameOrigin } from "../core/http";
 import { isId, newId } from "../core/id";
 import { boundedJson, integerValue, objectValue, stringValue } from "../core/validation";
+import { abortBatchUnlessOneChange, versionConflictOr } from "../core/optimistic";
 import { requireTenantAccess } from "../middleware/tenant";
 import { writeAudit } from "../services/audit-service";
 
@@ -112,13 +113,21 @@ export async function updateMatch(request: Request, env: Env, auth: AuthContext,
   const expectedVersion = integerValue(body, "version", { min: 1, max: 2_147_483_647 });
   const input = parseInput(body);
   const now = new Date().toISOString();
-  const updated = await env.DB.prepare(`UPDATE matches SET match_date=?,competition=?,venue=?,state=?,payload_json=?,version=version+1,updated_at=?
-    WHERE club_id=? AND id=? AND deleted_at IS NULL AND version=?`).bind(input.matchDate, input.competition, input.venue, input.state, input.payloadJson, now, context.clubId, matchId, expectedVersion).run();
-  if (updated.meta.changes !== 1) throw new HttpError(409, "VERSION_CONFLICT", "The match was changed by another client.");
-  const statements = [env.DB.prepare("DELETE FROM match_events WHERE club_id=? AND match_id=?").bind(context.clubId, matchId),
+  // Version bump + event rewrite in one batch (= one D1 transaction); the guard
+  // rolls the whole batch back if a racing writer bumped the version first.
+  const statements = [
+    env.DB.prepare(`UPDATE matches SET match_date=?,competition=?,venue=?,state=?,payload_json=?,version=version+1,updated_at=?
+      WHERE club_id=? AND id=? AND deleted_at IS NULL AND version=?`).bind(input.matchDate, input.competition, input.venue, input.state, input.payloadJson, now, context.clubId, matchId, expectedVersion),
+    abortBatchUnlessOneChange(env.DB, "matches", ["club_id", "id"], [context.clubId, matchId]),
+    env.DB.prepare("DELETE FROM match_events WHERE club_id=? AND match_id=?").bind(context.clubId, matchId),
     ...input.events.map((event) => env.DB.prepare(`INSERT INTO match_events (club_id,id,match_id,event_type,match_ms,payload_json,created_at,updated_at)
-      VALUES (?,?,?,?,?,?,?,?)`).bind(context.clubId, event.id, matchId, event.eventType, event.matchMs, event.payloadJson, now, now))];
-  await env.DB.batch(statements);
+      VALUES (?,?,?,?,?,?,?,?)`).bind(context.clubId, event.id, matchId, event.eventType, event.matchMs, event.payloadJson, now, now)),
+  ];
+  try {
+    await env.DB.batch(statements);
+  } catch (error) {
+    await versionConflictOr(env.DB, error, { table: "matches", where: "club_id=? AND id=?", binds: [context.clubId, matchId], expected: expectedVersion });
+  }
   await writeAudit(env.DB, { clubId: context.clubId, userId: auth.userId, action: "MATCH_UPDATED", entityType: "match", entityId: matchId, metadata: { version: expectedVersion + 1 } });
   return json({ match: { id: matchId, version: expectedVersion + 1 } }, requestId);
 }

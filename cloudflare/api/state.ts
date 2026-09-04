@@ -3,6 +3,7 @@ import { HttpError, json, readJson, requireSameOrigin } from "../core/http";
 import { isId } from "../core/id";
 import { boundedJson, integerValue, objectValue } from "../core/validation";
 import { minimize } from "../core/dfbnet";
+import { abortBatchUnlessOneChange, versionConflictOr } from "../core/optimistic";
 import { requireTeamAccess } from "../middleware/tenant";
 import { writeAudit } from "../services/audit-service";
 
@@ -69,10 +70,15 @@ export async function putState(request: Request, env: Env, auth: AuthContext, cl
   const now = new Date().toISOString();
 
   await env.DB.prepare("INSERT OR IGNORE INTO team_sync_versions (club_id,team_id,version,updated_at) VALUES (?,?,0,?)").bind(club, team, now).run();
-  const locked = await env.DB.prepare("UPDATE team_sync_versions SET version=version+1,updated_at=? WHERE club_id=? AND team_id=? AND version=?").bind(now, club, team, expectedVersion).run();
-  if (locked.meta.changes !== 1) throw new HttpError(409, "VERSION_CONFLICT", "The team data was changed by another client.");
+  const current0 = await env.DB.prepare("SELECT version FROM team_sync_versions WHERE club_id=? AND team_id=?").bind(club, team).first<{ version: number }>();
+  if ((current0?.version ?? 0) !== expectedVersion) throw new HttpError(409, "VERSION_CONFLICT", "The team data was changed by another client.");
 
+  // The version bump and every data statement run in one batch (= one D1
+  // transaction). The guard aborts the whole batch if a racing writer bumped
+  // the version between the check above and the batch.
   const statements: D1PreparedStatement[] = [
+    env.DB.prepare("UPDATE team_sync_versions SET version=version+1,updated_at=? WHERE club_id=? AND team_id=? AND version=?").bind(now, club, team, expectedVersion),
+    abortBatchUnlessOneChange(env.DB, "team_sync_versions", ["club_id", "team_id"], [club, team]),
     env.DB.prepare("DELETE FROM match_events WHERE club_id=? AND team_id=?").bind(club, team),
     env.DB.prepare("DELETE FROM matches WHERE club_id=? AND team_id=?").bind(club, team),
     env.DB.prepare("DELETE FROM tournaments WHERE club_id=? AND team_id=?").bind(club, team),
@@ -117,8 +123,7 @@ export async function putState(request: Request, env: Env, auth: AuthContext, cl
   try {
     await env.DB.batch(statements);
   } catch (error) {
-    await env.DB.prepare("UPDATE team_sync_versions SET version=? WHERE club_id=? AND team_id=? AND version=?").bind(expectedVersion, club, team, expectedVersion + 1).run();
-    throw error;
+    await versionConflictOr(env.DB, error, { table: "team_sync_versions", where: "club_id=? AND team_id=?", binds: [club, team], expected: expectedVersion });
   }
   await writeAudit(env.DB, {
     clubId: club, userId: auth.userId, action: "TEAM_STATE_SYNCED", entityType: "team", entityId: team,
