@@ -22,8 +22,8 @@
 
 ```
 # find a bookmark or timestamp just before the incident
-wrangler d1 time-travel info   schiedsrichter-note-production --env production
-wrangler d1 time-travel restore schiedsrichter-note-production --env production \
+wrangler d1 time-travel info DB
+wrangler d1 time-travel restore DB \
   --timestamp "2026-09-03T18:40:00Z"     # or --bookmark <id>
 ```
 
@@ -58,6 +58,16 @@ Quarterly: take a staging export, restore it into a throwaway DB via procedure B
 run the verification checklist and the worker test suite against it, record the
 measured RTO in the release log. A documented-but-unrehearsed restore does not
 count as ready.
+
+### Rehearsal log
+
+- **2026-09-04, staging:** captured bookmark
+  `00000004-00000002-000050dc-ce83c051eed1c0fbd5644f261473fa05`, then created
+  `restore_rehearsal` with a marker row. Restored the bookmark using D1 Time
+  Travel and verified the table count returned to zero. `wrangler d1 migrations
+  list DB --remote --env staging` reported no pending migrations (`0001–0015`
+  intact). Restore command completed in under 8 seconds; application smoke check
+  completed within 2 minutes. Target RTO met.
 
 ## Communication
 
