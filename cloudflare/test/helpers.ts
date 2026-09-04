@@ -17,7 +17,7 @@ export async function migrate(): Promise<void> {
 }
 
 export async function resetDb(): Promise<void> {
-  for (const table of ["audit_log", "sessions", "legacy_migrations", "dfbnet_imports", "team_drafts", "team_rosters", "team_sync_versions", "match_events", "matches", "players", "tournaments", "teams", "memberships", "clubs", "users"]) {
+  for (const table of ["audit_log", "sessions", "invitations", "legacy_migrations", "dfbnet_imports", "team_drafts", "team_rosters", "team_sync_versions", "match_events", "matches", "players", "tournaments", "teams", "memberships", "clubs", "users"]) {
     await env.DB.prepare(`DELETE FROM ${table}`).run();
   }
 }

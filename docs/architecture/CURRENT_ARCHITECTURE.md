@@ -95,7 +95,12 @@ A `scheduled` handler runs daily (`triggers.crons`): retention cleanup
 - `GET /clubs/:id/export` returns the full club tree (`club.manage`,
   rate-limited, `EXPORT_CREATED`).
 - Daily retention: expired/revoked sessions purged; `audit_log` trimmed at 24
-  months, `dfbnet_imports` at 12.
+  months, `dfbnet_imports` at 12; stale `pending` invitations flipped to
+  `expired`, terminal invitations dropped after 90 days.
+- `purgeClub` hard-deletes every club-scoped table — matches, events,
+  tournaments, players, team_* blobs, `legacy_migrations`, teams,
+  `dfbnet_imports`, `invitations`, memberships — then the `clubs` row
+  (`lifecycle.test.ts` asserts no orphans).
 
 ## Client storage & crypto
 

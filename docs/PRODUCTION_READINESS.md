@@ -36,7 +36,7 @@ checklist.
 | 24 | Invitation lifecycle (token possession, no auto-join) | 🟢 | `api/invitations.ts` + `invitations.test.ts` (10 cases); `migration 0018` |
 | 25 | Full-history secret + PII scan | 🟢 | `security` job `fetch-depth: 0` + gitleaks + `check-pii-history.mjs`; `docs/security/GIT_HISTORY_PII_RESPONSE.md` |
 | 26 | D1 EU region verified | 🟢 | `wrangler d1 list` 2026-09-04: dev/staging/production all `jurisdiction = eu` |
-| 27 | `main` branch protection reviewed | 🟡 | `docs/operations/branch-protection.md`; maintainer must confirm + record |
+| 27 | `main` branch protection reviewed | 🟡 | verified 2026-09-04 (`docs/operations/branch-protection.md`): 5 required checks + strict + linear history + no force-push/deletion + conversation resolution. **No PR-review gate** (single maintainer, `enforce_admins:off`) — residual risk, tighten when a 2nd maintainer joins |
 | 28 | Remote staging runtime smoke green | 🟡 | `tests/staging/smoke.spec.ts` + gated `staging-e2e` job; first green run + `wrangler tail` KDF check outstanding |
 
 Legend: 🟢 done · 🟡 partial · 🔴 not started.
@@ -52,9 +52,9 @@ actually deliver notifications.
 
 1. `wrangler secret put ALERT_WEBHOOK_URL` in production + one recorded synthetic
    delivery (`docs/runbooks/alert-delivery.md`) — item 22.
-2. Review `main` branch protection against `docs/operations/branch-protection.md`;
-   record the date — item 27.
-3. Enable and get one green `staging-e2e` run; `wrangler tail` a staging login to
+2. Enable and get one green `staging-e2e` run; `wrangler tail` a staging login to
    confirm the `i=` PBKDF2 path (no `Pbkdf2 failed`) — item 28.
-4. Add the weekly logical `wrangler d1 export` job (daily retention already runs
+3. Add the weekly logical `wrangler d1 export` job (daily retention already runs
    via `triggers.crons`).
+4. (When a 2nd maintainer joins) turn on the PR-review gate + `enforce_admins` —
+   item 27, `docs/operations/branch-protection.md`.

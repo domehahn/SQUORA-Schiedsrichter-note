@@ -13,8 +13,10 @@ export async function purgeClub(db: D1Database, clubId: string): Promise<Record<
     "team_drafts",
     "team_rosters",
     "team_sync_versions",
+    "legacy_migrations",
     "teams",
     "dfbnet_imports",
+    "invitations",
     "memberships",
   ];
   const counts: Record<string, number> = {};

@@ -18,6 +18,8 @@ async function seedClubContent(clubId: string, teamId: string): Promise<void> {
       .bind(clubId, teamId, crypto.randomUUID(), "Synthetic cup", "2026-09-04", "{}", now, now),
     env.DB.prepare("INSERT INTO players (club_id,id,team_id,name,shirt_number,version,created_at,updated_at) VALUES (?,?,?,?,?,1,?,?)")
       .bind(clubId, crypto.randomUUID(), teamId, "Max Testspieler", "7", now, now),
+    env.DB.prepare("INSERT INTO invitations (club_id,id,email,role,token_hash,status,expires_at,invited_by,created_at,updated_at) VALUES (?,?,?,?,?, 'pending',?,?,?,?)")
+      .bind(clubId, crypto.randomUUID(), "invitee@example.invalid", "referee", crypto.randomUUID().replaceAll("-", "").padEnd(64, "0"), now, USER_A, now, now),
   ]);
 }
 
@@ -76,7 +78,7 @@ describe("club export & lifecycle deletion", () => {
     await env.DB.prepare("UPDATE clubs SET deletion_due_at='2020-01-01T00:00:00.000Z' WHERE id=?").bind(CLUB_A).run();
     const purged = await runClubPurge(env.DB);
     expect(purged).toEqual([CLUB_A]);
-    for (const table of ["matches", "match_events", "tournaments", "players", "teams", "memberships"]) {
+    for (const table of ["matches", "match_events", "tournaments", "players", "teams", "memberships", "invitations", "legacy_migrations"]) {
       expect((await env.DB.prepare(`SELECT count(*) AS n FROM ${table} WHERE club_id=?`).bind(CLUB_A).first<{ n: number }>())?.n, table).toBe(0);
     }
     expect((await env.DB.prepare("SELECT count(*) AS n FROM clubs WHERE id=?").bind(CLUB_A).first<{ n: number }>())?.n).toBe(0);

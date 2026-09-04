@@ -1,24 +1,31 @@
 # Branch protection — `main`
 
-GitHub branch-protection state cannot be proven from the repository. This file
-is the source of truth for what **must** be configured; `PRODUCTION_READINESS.md`
-may only call CI/CD green once a maintainer has confirmed these settings match.
+## Verified state (`gh api …/branches/main/protection`, 2026-09-04)
 
-## Required settings (Settings → Branches → `main`)
+| Setting | Value | Note |
+| --- | --- | --- |
+| Required status checks | the 5 below | enforced |
+| Strict (branch up to date before merge) | **on** | |
+| Require linear history | **on** | |
+| Require conversation resolution | **on** | |
+| Allow force pushes | **off** | |
+| Allow deletions | **off** | |
+| Require a pull request before merging | **off** | single-maintainer repo — see below |
+| Required approving reviews | none | |
+| Include administrators (`enforce_admins`) | **off** | documented break-glass; the maintainer pushes to `main` directly |
 
-- **Require a pull request before merging** — yes.
-  - Require approvals: ≥ 1.
-  - Dismiss stale approvals on new commits: yes.
-- **Require status checks to pass before merging** — yes, *and* "Require
-  branches to be up to date before merging" (strict).
-- **Require linear history** — yes.
-- **Require conversation resolution before merging** — yes.
-- **Do not allow bypassing the above** / "Include administrators": the repo has
-  historically kept `enforce_admins: false` as a break-glass path for the sole
-  maintainer. If more than one person can push, set it to `true`.
-- **Restrict who can push to matching branches** — only the maintainer(s) / no
-  direct pushes.
-- **Allow force pushes** — no. **Allow deletions** — no.
+**Single-maintainer model.** The repo currently has one maintainer, so a
+mandatory PR-review gate would hard-block every merge (you cannot approve your
+own PR). Instead: the CI checks are required and strict, force-push/deletion are
+blocked, and history stays linear. `PRODUCTION_READINESS.md` reflects this as a
+residual risk, not as "PR review enforced".
+
+**When a second maintainer joins**, tighten to:
+
+- **Require a pull request before merging** — on, ≥ 1 approval, dismiss stale
+  approvals on new commits.
+- **Include administrators** — on.
+- **Restrict who can push** — maintainers only, no direct pushes.
 
 ## Required status checks (exact names from `ci.yml`)
 
@@ -40,8 +47,3 @@ must not be marked required (a skipped required check blocks all merges).
 - `continue-on-error` on any security job.
 - Downgrading `npm audit` below `--audit-level=high` or to non-blocking.
 - Removing a check to unblock a merge.
-
-## Verification
-
-A maintainer records, in the release notes for the go-live:
-`branch protection reviewed on YYYY-MM-DD, matches docs/operations/branch-protection.md`.

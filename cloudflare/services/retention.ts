@@ -4,6 +4,7 @@ export interface RetentionResult {
   sessions: number;
   audit: number;
   imports: number;
+  invitations: number;
   purgedClubs: number;
 }
 
@@ -25,6 +26,7 @@ export async function runClubPurge(db: D1Database, now: Date = new Date()): Prom
 const DAY_MS = 86_400_000;
 const AUDIT_RETENTION_DAYS = 730; // 24 months
 const IMPORT_RETENTION_DAYS = 365; // 12 months
+const INVITATION_RETENTION_DAYS = 90; // terminal (accepted/revoked/expired) invitations
 
 /**
  * Rolling data-retention cleanup (docs/privacy/DATA_RETENTION.md). Idempotent —
@@ -46,12 +48,22 @@ export async function runRetention(db: D1Database, now: Date = new Date()): Prom
     .prepare("DELETE FROM dfbnet_imports WHERE created_at < ?")
     .bind(daysAgo(IMPORT_RETENTION_DAYS))
     .run();
+  // Age out invitations: flip long-past-expiry pending tokens to 'expired', then
+  // drop terminal (accepted / revoked / expired) rows after the retention window.
+  await db.prepare("UPDATE invitations SET status='expired',updated_at=? WHERE status='pending' AND expires_at < ?")
+    .bind(iso(now), iso(now))
+    .run();
+  const invitations = await db
+    .prepare("DELETE FROM invitations WHERE status IN ('accepted','revoked','expired') AND updated_at < ?")
+    .bind(daysAgo(INVITATION_RETENTION_DAYS))
+    .run();
   const purgedClubs = await runClubPurge(db, now);
 
   return {
     sessions: sessions.meta.changes ?? 0,
     audit: audit.meta.changes ?? 0,
     imports: imports.meta.changes ?? 0,
+    invitations: invitations.meta.changes ?? 0,
     purgedClubs: purgedClubs.length,
   };
 }
