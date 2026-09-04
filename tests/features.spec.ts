@@ -15,7 +15,7 @@ test("erfasst eine Zeitstrafe, bearbeitet den Eintrag, speichert und öffnet ihn
   await expect(page.locator(".pen-badge")).toContainText("Nr. 7");
   await expect(page.locator(".event-table")).toContainText("Zeitstrafe");
 
-  await page.locator(".event-table .row-timePenalty .mini-icon").first().click();
+  await page.locator(".event-table .row-timePenalty").getByTitle("Bearbeiten").click();
   await page.locator(".modal input").first().fill("9");
   await page.getByRole("button", { name: "Änderung speichern" }).click();
   await expect(page.locator(".event-table")).toContainText("Nr. 9");

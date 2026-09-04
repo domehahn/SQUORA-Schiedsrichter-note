@@ -8,15 +8,26 @@ export async function login(page: Page, email: string, password: string): Promis
   await page.waitForSelector(".tenant-card, #setup-title");
 }
 
-/** First-run gate: create the club, then the first team, then open online. */
+/**
+ * First-run gate: create the club, then the first team, then open online.
+ * The same user account accumulates memberships across every spec file that
+ * runs in this suite, so by the Nth passGate() call the gate may show the
+ * "pick a club" list (>= 2 clubs, none remembered) instead of the onboarding
+ * form directly — handle that by explicitly asking for a new club.
+ */
 export async function passGate(page: Page, club: string, team = "D1"): Promise<void> {
   const clubField = page.getByLabel("Vereinsname");
   const teamField = page.getByLabel("Mannschaft");
   const open = page.getByRole("button", { name: "Öffnen", exact: true });
   const app = page.locator("#setup-title");
+  const addClub = page.getByRole("button", { name: /Weiteren Verein anlegen/ });
   if (await app.count()) return;
 
-  await expect(clubField.or(teamField).or(open).or(app).first()).toBeVisible();
+  await expect(clubField.or(teamField).or(open).or(app).or(addClub).first()).toBeVisible();
+  if (await addClub.count()) {
+    await addClub.click();
+    await expect(clubField).toBeVisible();
+  }
   if (await clubField.count()) {
     await clubField.fill(club);
     await page.getByRole("button", { name: /Verein anlegen/ }).click();

@@ -3,6 +3,7 @@ import { deleteAccount } from "./api/account";
 import { exportClub } from "./api/export";
 import { login, logout, me, register } from "./api/auth";
 import { acceptInvitation, createInvitation, listInvitations, revokeInvitation, viewInvitation } from "./api/invitations";
+import { disableLiveShare, enableLiveShare, getPublicLive } from "./api/live";
 import { createMatch, deleteMatch, getMatch, listMatches, updateMatch } from "./api/matches";
 import { listMembers, removeMember, updateMember } from "./api/members";
 import { listLegacyTenants, migrateLegacy, readLegacyPayload } from "./api/legacy-migration";
@@ -34,6 +35,16 @@ function loginHtml(error = ""): string {
 
 function loginPage(requestId: string, error = "", status = 200): Response {
   return withHeaders(new Response(loginHtml(error), { status, headers: { "Content-Type": "text/html; charset=utf-8" } }), requestId, true);
+}
+
+/**
+ * Public, unauthenticated live-ticker page. Static shell only — `live.js`
+ * (same-origin, CSP allows no inline scripts) polls the public JSON endpoint
+ * and renders score + a generic event log. No player names, no login.
+ */
+function livePage(requestId: string): Response {
+  const html = `<!doctype html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#0b2559"><title>Liveticker · SQUORA Schiedsrichter Note</title><link rel="stylesheet" href="${MOUNT_PATH}/live.css"></head><body><main><span class="eyebrow">Liveticker</span><h1><span id="home-name">–</span><span>–</span><span id="away-name">–</span></h1><div class="score" id="score">– : –</div><div class="phase" id="phase">–</div><div class="error" id="error" role="alert" hidden>Dieser Liveticker ist nicht (mehr) verfügbar.</div><ul id="events"></ul><p class="updated" id="updated"></p></main><script src="${MOUNT_PATH}/live.js" defer></script></body></html>`;
+  return withHeaders(new Response(html, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } }), requestId, true);
 }
 
 function redirect(location: string, requestId: string, cookie?: string): Response {
@@ -140,6 +151,14 @@ async function routeAuthenticated(request: Request, env: Env, auth: AuthContext,
     if (request.method === "PUT") return putState(request, env, auth, clubId, teamId, requestId);
     return methodNotAllowed();
   }
+  const liveShare = path.match(/^\/api\/v1\/clubs\/([^/]+)\/teams\/([^/]+)\/draft\/share$/u);
+  if (liveShare) {
+    const clubId = decodeURIComponent(liveShare[1]);
+    const teamId = decodeURIComponent(liveShare[2]);
+    if (request.method === "POST") return enableLiveShare(request, env, auth, clubId, teamId, requestId);
+    if (request.method === "DELETE") return disableLiveShare(request, env, auth, clubId, teamId, requestId);
+    return methodNotAllowed();
+  }
   const legacyMigration = path.match(/^\/api\/v1\/clubs\/([^/]+)\/teams\/([^/]+)\/migrations\/legacy$/u);
   if (legacyMigration) {
     if (request.method === "POST") return migrateLegacy(request, env, auth, decodeURIComponent(legacyMigration[1]), decodeURIComponent(legacyMigration[2]), requestId);
@@ -199,7 +218,7 @@ async function routeAuthenticated(request: Request, env: Env, auth: AuthContext,
   throw new HttpError(404, "NOT_FOUND", "The requested resource was not found.");
 }
 
-const PUBLIC_ASSETS = new Set(["/login.css", "/manifest.webmanifest", "/sw.js", "/registerSW.js", "/squora-favicon.png", "/squora-logo.png", "/pwa-192.png", "/pwa-512.png", "/pwa-maskable-512.png"]);
+const PUBLIC_ASSETS = new Set(["/login.css", "/live.css", "/live.js", "/manifest.webmanifest", "/sw.js", "/registerSW.js", "/squora-favicon.png", "/squora-logo.png", "/pwa-192.png", "/pwa-512.png", "/pwa-maskable-512.png"]);
 
 export default {
   async fetch(request, env): Promise<Response> {
@@ -211,10 +230,14 @@ export default {
     let response: Response;
     try {
       const publicInvite = path.match(/^\/api\/v1\/invitations\/([^/]+)$/u);
+      const publicLiveApi = path.match(/^\/api\/v1\/live\/([^/]+)$/u);
+      const publicLivePage = path.match(/^\/live\/([^/]+)$/u);
       if (path === "/auth/login" && request.method === "POST") response = await formLogin(request, env, requestId);
       else if (path === "/api/v1/auth/login" && request.method === "POST") response = await login(request, env, requestId);
       else if (path === "/api/v1/auth/register" && request.method === "POST") response = await register(request, env, requestId);
       else if (publicInvite && request.method === "GET") response = await viewInvitation(request, env, decodeURIComponent(publicInvite[1]), requestId);
+      else if (publicLiveApi && request.method === "GET") response = await getPublicLive(request, env, decodeURIComponent(publicLiveApi[1]), requestId);
+      else if (publicLivePage && request.method === "GET") response = livePage(requestId);
       else if (request.method === "GET" && (PUBLIC_ASSETS.has(path) || path.startsWith("/workbox-"))) {
         response = withHeaders(await env.ASSETS.fetch(new Request(new URL(path, url.origin), request)), requestId);
       } else {

@@ -7,6 +7,7 @@ import { cue, unlockAudio } from "./notify";
 import { TenantGate } from "./TenantGate";
 import { RosterEditor } from "./RosterEditor";
 import { PitchView } from "./PitchView";
+import { LiveTickerControl } from "./LiveTickerControl";
 import { CollapsibleSection, MetaPanel, SessionExpiredModal, StatsPanel, TeamActions, TeamLibraryPanel, TournamentPanel, TournamentReport } from "./panels";
 import { TeamRosterPanel } from "./TeamRosterPanel";
 import { downloadBlob, downloadJson } from "./download";
@@ -668,6 +669,16 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  /**
+   * Opens WhatsApp (any chat/group the user picks) with one event pre-filled as
+   * text via the wa.me deep link — no API, no account, no server involvement;
+   * the referee sends it themselves. `event.kind !== "period"` events only.
+   */
+  const shareEventToWhatsApp = (event: MatchEvent) => {
+    const text = [`${event.label} (${event.minute}')`, `${match.homeTeam} ${homeScore}:${awayScore} ${match.awayTeam}`].join("\n");
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener");
+  };
+
   const shareReport = async () => {
     const lines = [
       `${match.homeTeam} ${homeScore} : ${awayScore} ${match.awayTeam}${match.shootout.length ? ` (n.E. ${shoot.home}:${shoot.away})` : ""}`,
@@ -1108,6 +1119,7 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
               <button className="icon-button" onClick={() => setPrintTarget(match)} disabled={!match.events.length}><Icon name="print" /> Drucken</button>
             </div>
           </div>
+          <LiveTickerControl clubId={tenant.id} teamId={team.id} />
 
           {!showLog ? null : match.events.length === 0 ? <div className="empty-log"><Icon name="whistle" /><strong>Noch keine Spielereignisse</strong><span>Sobald das Spiel startet, erscheint hier der erste Eintrag.</span></div> :
             <div className="table-scroll">
@@ -1128,6 +1140,7 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
                       <td>{event.team === "home" ? match.homeTeam : event.team === "away" ? match.awayTeam : "Spielabschnitt"}</td>
                       <td className="no-print event-actions">
                         {event.kind !== "period" && <>
+                          <button className="mini-icon" aria-label={`${event.label} per WhatsApp teilen`} title="Per WhatsApp teilen" onClick={() => shareEventToWhatsApp(event)}><Icon name="share" /></button>
                           <button className="mini-icon" aria-label={`${event.label} bearbeiten`} title="Bearbeiten" onClick={() => editEvent(event)}><Icon name="edit" /></button>
                           <button className="mini-icon danger" aria-label={`${event.label} löschen`} title="Löschen" onClick={() => deleteEvent(event.id)}><Icon name="trash" /></button>
                         </>}

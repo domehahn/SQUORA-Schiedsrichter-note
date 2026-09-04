@@ -126,6 +126,25 @@ export async function acceptInvitation(token: string): Promise<{ ok: boolean; st
   } catch { return { ok: false, status: 0 }; }
 }
 
+// ---- public live ticker ----------------------------------------------------
+
+/** Enable (or rotate) the public live-ticker link for the team's currently running match. Null if none is live yet. */
+export async function enableLiveShare(clubId: string, teamId: string): Promise<{ token: string } | null> {
+  try {
+    const response = await fetch(`${teamsUrl(clubId)}/${enc(teamId)}/draft/share`, { method: "POST", headers: { "Content-Type": "application/json" } });
+    if (!response.ok) return null;
+    const body = await response.json() as { token?: unknown };
+    return typeof body.token === "string" ? { token: body.token } : null;
+  } catch { return null; }
+}
+
+export async function disableLiveShare(clubId: string, teamId: string): Promise<boolean> {
+  try {
+    const response = await fetch(`${teamsUrl(clubId)}/${enc(teamId)}/draft/share`, { method: "DELETE", headers: { "Content-Type": "application/json" } });
+    return response.ok;
+  } catch { return false; }
+}
+
 export async function fetchTeams(clubId: string): Promise<TeamUnit[] | null> {
   try {
     const response = await fetch(teamsUrl(clubId), { headers: { Accept: "application/json" } });

@@ -128,6 +128,23 @@ upsert with `mode: merge | replace` (replace reconciles the roster). Rate-limite
 panel drives this endpoint for the referee's own team; `players` also has
 `GET/POST/PATCH/DELETE` CRUD plus `DELETE …/players` to clear the whole roster (`api/players.ts`, team-scoped, optimistic-locked, `PLAYER_*` audit).
 
+## Public live ticker
+
+Opt-in, per-team: `POST/DELETE /api/v1/clubs/:c/teams/:t/draft/share`
+(authenticated, `matches.update`) mints/rotates or clears a 256-bit token —
+only `SHA-256(token)` is stored, on the team's `team_drafts` row (migration
+0020). `GET /api/v1/live/:token` and the static page `/live/:token`
+(`cloudflare/worker.ts` `livePage` + `public/live.{js,css}`, same CSP,
+`script-src 'self'`) are the only unauthenticated, public surface in the app.
+The response is server-derived, never the stored free text: score (counted
+from event kinds), phase, and a generic event log (`Tor`, `Gelbe Karte`, …) —
+**never** player names, pass numbers, birthdates, or the referee's own
+labels/notes. Rate-limited (`LOGIN_RATE_LIMITER`). The share is tied to the
+live draft, so it disappears automatically once the match is archived (the
+`team_drafts` row is deleted) or explicitly revoked; nothing is ever persisted
+beyond the running match. QR code is rendered client-side
+(`qrcode-generator`, bundled, no third-party network call) from the link only.
+
 ## Security headers & error shape
 
 `SECURITY_HEADERS` + a CSP with `script-src 'self'` (no `unsafe-inline`), HSTS,
@@ -138,7 +155,7 @@ structured line.
 
 ## Quality baseline
 
-- Unit: 38 · Worker (Miniflare + D1 `0001–0019`): 88 · e2e (Playwright): 19
+- Unit: 43 · Worker (Miniflare + D1 `0001–0020`): 96 · e2e (Playwright): 21
   (+1 skipped) · real-Worker e2e: 5 · build + lint + `npm audit --audit-level=high`:
   clean.
 - CI: `.github/workflows/ci.yml` (quality, e2e, e2e-worker, security, CodeQL;
