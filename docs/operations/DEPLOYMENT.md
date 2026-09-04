@@ -6,7 +6,7 @@
 | --- | --- | --- | --- | --- |
 | development | `schiedsrichter-note-web-development` | `workers.dev` | `schiedsrichter-note-development` | 20 / 60 s |
 | staging | `schiedsrichter-note-web-staging` | `schiri-staging.squora.de` | `schiedsrichter-note-staging` | 10 / 60 s |
-| production | `schiedsrichter-note-web` | `schiri.squora.de` | `schiedsrichter-note-production` | 10 / 60 s |
+| production | `schiedsrichter-note-web` | `squora.de/schiedsrichter-note*` | `schiedsrichter-note-production` | 10 / 60 s |
 
 Each environment has its own D1 database, rate-limiter namespace and secrets.
 No production data is ever copied into staging or development.

@@ -12,7 +12,7 @@ gaps noted · **open** not started.
 | 3 — Server tenant resolution | done | `middleware/tenant.ts` `requireTenantAccess` / `requireTeamAccess`; no club query runs before a `TenantContext`. |
 | 4 — RBAC | done | `auth/roles.ts`, `auth/permissions.ts` (5 roles, 17 permissions); every API passes an explicit permission. |
 | 5 — Auth & sessions | partial | D1 users + hashed, revocable sessions (`auth/session.ts`), logout / logout-all, 8h expiry, disabled-account check. `AUTH_USERS` bootstrap secret still the account source; no self-serve invite/registration. |
-| 6 — Origin isolation | done | `wrangler.jsonc` route `schiri.squora.de`; worker keeps the `/schiedsrichter-note` prefix only as a legacy redirect; cookie `Path=/`. |
+| 6 — Origin isolation | partial | Product decision: production stays at `squora.de/schiedsrichter-note/` (not a dedicated origin). Worker strips the `/schiedsrichter-note` prefix on the way in and prefixes every URL it emits; cookie `Path=/`; SW `NetworkOnly` matches `/api/` `/auth/` at any depth. Full origin isolation (own subdomain) deferred. |
 | 7 — Local storage security | done | `encryptedCache.ts` (IndexedDB, AES-GCM record); `localData.ts` legacy keys read-only via migration flow. |
 | 8 — Cryptography | done | PBKDF2-SHA256 600k iters, 128-bit salt, AES-256-GCM, 96-bit IV; passphrase floor 12, no max; key non-extractable, memory only. |
 | 9 — E2E vs SaaS encryption decision | done | `docs/architecture/ADR-001-encryption-model.md` — Model C hybrid. |

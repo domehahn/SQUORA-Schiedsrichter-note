@@ -8,9 +8,10 @@ Per-epic detail: `docs/EPIC_STATUS.md`.
 React 19 / Vite PWA served by a single Cloudflare Worker
 (`cloudflare/worker.ts`). The Worker serves the static build (`ASSETS`,
 `run_worker_first`), renders the login form, and exposes the `/api/v1` REST API.
-Target origin `schiri.squora.de`; the `/schiedsrichter-note` path prefix remains
-only as a legacy redirect. Vite PWA precaches static assets and forces
-`NetworkOnly` for `/api/*` and `/auth/*`.
+Production is served at `squora.de/schiedsrichter-note/` (product decision — no
+dedicated origin). The Worker strips the `/schiedsrichter-note` prefix from every
+incoming path (`MOUNT_PATH`) and prefixes every URL it emits. Vite PWA precaches
+static assets and forces `NetworkOnly` for `/api/*` and `/auth/*` at any depth.
 
 ## Authentication & sessions
 

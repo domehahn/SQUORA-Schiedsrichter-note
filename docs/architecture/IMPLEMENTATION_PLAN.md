@@ -12,8 +12,10 @@
 5. Add versioned `/api/v1` club, member, team, player, match, tournament, import,
    audit, export and deletion routes. All foreign identifiers are resolved with
    `club_id` in the same query and foreign resources return 404.
-6. Move production to `schiri.squora.de`, scope cookies and PWA caches to that
-   origin, and make every `/api/*` and `/auth/*` request NetworkOnly.
+6. Keep production at `squora.de/schiedsrichter-note/`; the Worker strips the
+   mount prefix on the way in and prefixes every URL it emits; every `/api/*`
+   and `/auth/*` request is NetworkOnly at any path depth. (A dedicated origin
+   was considered and deferred.)
 7. Replace plaintext localStorage domain data with an encrypted IndexedDB cache;
    keep encryption keys in memory only and raise the local KDF/passphrase floor.
 8. Split the DFBnet adapter into parser/schema/mapper/validator/fingerprint
