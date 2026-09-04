@@ -6,7 +6,8 @@ import { useWakeLock } from "./useWakeLock";
 import { cue, unlockAudio } from "./notify";
 import { TenantGate } from "./TenantGate";
 import { RosterEditor } from "./RosterEditor";
-import { StatsPanel, TeamLibraryPanel, TournamentPanel, TournamentReport } from "./panels";
+import { CollapsibleSection, MetaPanel, SessionExpiredModal, StatsPanel, TeamActions, TeamLibraryPanel, TournamentPanel, TournamentReport } from "./panels";
+import { downloadBlob, downloadJson } from "./download";
 import { ACTIVE_TENANT_KEY, SOUND_KEY } from "./localData";
 import { readEncryptedCache, writeEncryptedCache } from "./encryptedCache";
 import { scopeKey, type TeamUnit, type TenantMeta } from "./tenant";
@@ -28,7 +29,6 @@ import {
   createMatch,
   currentPeriodMs,
   displayMinute,
-  eventMeta,
   formatClock,
   formatDate,
   formatWallClock,
@@ -46,7 +46,6 @@ import {
   uid,
   type ActionKind,
   type MatchEvent,
-  type MatchMeta,
   type MatchPhase,
   type MatchState,
   type Player,
@@ -1215,160 +1214,6 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
     downloadBlob(`spielbericht-${match.homeTeam}-${match.awayTeam}.csv`.replace(/[^a-z0-9äöüß.-]+/gi, "-").toLowerCase(),
       new Blob([toCsv(rows)], { type: "text/csv;charset=utf-8" }));
   }
-}
-
-function downloadBlob(filename: string, blob: Blob) {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
-}
-
-function downloadJson(filename: string, data: unknown) {
-  downloadBlob(filename, new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
-}
-
-function TeamActions({ side, team, subs, sanctions: sanctionRows, disabled, onAction }: {
-  side: TeamSide;
-  team: string;
-  subs: number;
-  sanctions: ReturnType<typeof sanctions>;
-  disabled: boolean;
-  onAction: (action: ActionKind) => void;
-}) {
-  const buttons: { action: ActionKind; className: string; icon: React.ReactNode }[] = [
-    { action: "goal", className: "action-goal", icon: <Icon name="ball" /> },
-    { action: "penaltyGoal", className: "action-pen", icon: <Icon name="penalty" /> },
-    { action: "ownGoal", className: "action-own", icon: <Icon name="ball" /> },
-    { action: "substitution", className: "action-sub", icon: <Icon name="swap" /> },
-    { action: "yellow", className: "action-yellow", icon: <span className="large-card yellow" /> },
-    { action: "yellowRed", className: "action-yellowred", icon: <span className="large-card yellowred" /> },
-    { action: "red", className: "action-red", icon: <span className="large-card red" /> },
-    { action: "timePenalty", className: "action-time", icon: <Icon name="stopwatch" /> },
-  ];
-  const cardCarriers = sanctionRows.filter((row) => row.yellow || row.yellowRed || row.red);
-  return (
-    <div className={`team-actions ${side}`}>
-      <div className="team-actions-title"><span>{side === "home" ? "Heim" : "Gast"}</span><strong>{team || (side === "home" ? "Heimmannschaft" : "Gastmannschaft")}</strong></div>
-      <div className="action-buttons">
-        {buttons.map((button) => (
-          <button key={button.action} className={button.className} disabled={disabled} aria-label={`${eventMeta[button.action].short} ${side === "home" ? "Heim" : "Gast"}`} onClick={() => onAction(button.action)}>
-            <span className="action-icon">{button.icon}</span>
-            <span><strong>{eventMeta[button.action].short}</strong></span>
-          </button>
-        ))}
-      </div>
-      <div className="team-tally">
-        <span><Icon name="swap" /> Wechsel: <strong>{subs}</strong></span>
-        {cardCarriers.length > 0 && (
-          <span className="team-tally-cards">
-            {cardCarriers.map((row) => (
-              <span key={row.key} className="tally-card">
-                {row.playerName || `Nr. ${row.player}`}
-                {row.yellow > 0 && <i className="mini-card yellow" />}
-                {row.yellowRed > 0 && <i className="mini-card yellowred" />}
-                {row.red > 0 && <i className="mini-card red" />}
-              </span>
-            ))}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function CollapsibleSection({ id, icon, title, hint, badge, open, onToggle, children }: {
-  id: string; icon: Parameters<typeof Icon>[0]["name"]; title: string; hint: string; badge?: number; open: boolean; onToggle: () => void; children: React.ReactNode;
-}) {
-  return (
-    <section className={`log-card collapsible no-print ${open ? "is-open" : ""}`} aria-labelledby={`${id}-title`}>
-      <button className="collapsible-head" aria-expanded={open} onClick={onToggle}>
-        <span className="collapsible-title"><Icon name={icon} /><span id={`${id}-title`}>{title}</span>{badge ? <span className="count">{badge}</span> : null}</span>
-        <span className={`chevron ${open ? "up" : ""}`}><Icon name="play" /></span>
-      </button>
-      {open && <div className="collapsible-body"><p className="collapsible-hint">{hint}</p>{children}</div>}
-    </section>
-  );
-}
-
-const META_FIELDS: { key: keyof MatchMeta; label: string; wide?: boolean; area?: boolean }[] = [
-  { key: "referee", label: "Schiedsrichter/in" },
-  { key: "assistant1", label: "Assistent/in 1" },
-  { key: "assistant2", label: "Assistent/in 2" },
-  { key: "fourthOfficial", label: "4. Offizielle/r" },
-  { key: "competition", label: "Wettbewerb" },
-  { key: "matchday", label: "Spieltag / Runde" },
-  { key: "venue", label: "Spielort / Platz", wide: true },
-  { key: "spectators", label: "Zuschauer" },
-  { key: "kickoffDelay", label: "Anstoßverzögerung" },
-  { key: "weather", label: "Wetter" },
-  { key: "pitch", label: "Platzverhältnisse" },
-  { key: "incidents", label: "Besondere Vorkommnisse", wide: true, area: true },
-];
-
-function MetaPanel({ meta, onChange }: { meta: MatchMeta; onChange: (patch: Partial<MatchMeta>) => void }) {
-  return (
-    <div className="meta-grid">
-      {META_FIELDS.map((field) => (
-        <label key={field.key} className={field.wide ? "wide" : ""}>
-          <span>{field.label}</span>
-          {field.area
-            ? <textarea rows={3} maxLength={600} value={meta[field.key]} onChange={(event) => onChange({ [field.key]: event.target.value })} />
-            : <input value={meta[field.key]} maxLength={120} onChange={(event) => onChange({ [field.key]: event.target.value })} />}
-        </label>
-      ))}
-    </div>
-  );
-}
-
-function SessionExpiredModal({ baseUrl }: { baseUrl: string }) {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const submit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      const response = await fetch(`${baseUrl}auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ email, password }).toString(),
-      });
-      if (response.ok || response.redirected) {
-        window.location.reload();
-        return;
-      }
-      setError("E-Mail-Adresse oder Passwort ist ungültig.");
-    } catch {
-      setError("Keine Verbindung. Bitte erneut versuchen.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="modal-backdrop" role="presentation">
-      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="session-title">
-        <span className="modal-symbol"><Icon name="logout" /></span>
-        <div className="dialog-kicker">Sitzung abgelaufen</div>
-        <h2 id="session-title">Bitte neu anmelden</h2>
-        {error && <div className="dialog-warning" role="alert">{error}</div>}
-        <p className="collapsible-hint">Dein aktuelles Spiel bleibt gespeichert.</p>
-        <form onSubmit={submit}>
-          <label className="player-field"><span>E-Mail-Adresse</span><input type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} required /></label>
-          <label className="player-field"><span>Passwort</span><input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label>
-          <div className="modal-actions">
-            <button className="save-button" disabled={busy}><Icon name="check" /> Anmelden</button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
 }
 
 function readActiveTenant(): string | null {
