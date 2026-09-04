@@ -1,7 +1,7 @@
 # CODEX EPIC — implementation status
 
 Audit of the 47-epic production-readiness brief against `main` at commit
-`0a01bf9`. Legend: **done** shipped and tested · **partial** core in place,
+`5b6ecc0`. Legend: **done** shipped and tested · **partial** core in place,
 gaps noted · **open** not started.
 
 | Epic | Status | Evidence / gap |
@@ -16,7 +16,7 @@ gaps noted · **open** not started.
 | 7 — Local storage security | done | `encryptedCache.ts` (IndexedDB, AES-GCM record); `localData.ts` legacy keys read-only via migration flow. |
 | 8 — Cryptography | done | PBKDF2-SHA256 600k iters, 128-bit salt, AES-256-GCM, 96-bit IV; passphrase floor 12, no max; key non-extractable, memory only. |
 | 9 — E2E vs SaaS encryption decision | done | `docs/architecture/ADR-001-encryption-model.md` — Model C hybrid. |
-| 10 — DFBnet integration layer | done | Client `src/integrations/dfbnet/*` (RFC-4180 parser, limits, schema detection, dedup) plus server-side staged endpoint `POST/GET /api/v1/clubs/:c/teams/:t/dfbnet/imports` and `…/:id/confirm` in `cloudflare/api/dfbnet.ts` — re-validate, re-minimize, server-computed fingerprint, `dfbnet_imports` audit record, idempotent player upsert. |
+| 10 — DFBnet integration layer | done | Client `src/integrations/dfbnet/*` (RFC-4180 parser, limits, schema detection, dedup) plus server-side staged endpoint `POST/GET /api/v1/clubs/:c/teams/:t/dfbnet/imports` and `…/:id/confirm` — re-validate, re-minimize, server-computed fingerprint, `dfbnet_imports` audit, idempotent player upsert (`merge`/`replace`). The **"Mein Kader"** UI panel drives it for the referee's own team; `api/players.ts` gives the roster relational CRUD. Opponent/library rosters stay in the `/state` blob by design. |
 | 11 — DFBnet data minimization | done | `ALLOWED` whitelist in `schema.ts`; server `FORBIDDEN_DFBNET_FIELDS` strips birthdate/pass/nationality/eligibility in `api/state.ts`. |
 | 12 — DFBnet adapter architecture | done | `RosterProvider` interface + `DfbnetCsvProvider`; domain model has no DFBnet field names. |
 | 13 — API architecture | partial | `cloudflare/{api,auth,middleware,core,services,legacy}` split with dedicated members, DFBnet and migration modules. The `/state` sync now uploads a **delta** (`{ delta: true, matches: {upsert, removeIds}, … }`), not the whole archive each tick; the full snapshot stays for bootstrap/migration/reconcile. No separate `repositories/` layer; per-resource REST beyond the flat match CRUD is future work. |

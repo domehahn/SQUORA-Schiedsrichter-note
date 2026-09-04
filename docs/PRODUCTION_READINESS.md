@@ -4,7 +4,7 @@ A release is **READY** only when every item below is GREEN with evidence
 (a passing CI run, a test file, a rehearsal log entry). Any RED item blocks
 production deployment.
 
-Status as of commit `0a01bf9` — 2026-09-04.
+Status as of commit `5b6ecc0` — 2026-09-04.
 
 | # | Criterion | State | Evidence / what's missing |
 | --- | --- | --- | --- |

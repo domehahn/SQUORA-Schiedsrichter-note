@@ -1,6 +1,6 @@
 # Current architecture
 
-Status: 2026-09-04, commit `0a01bf9`. Per-epic detail: `docs/EPIC_STATUS.md`;
+Status: 2026-09-04, commit `5b6ecc0`. Per-epic detail: `docs/EPIC_STATUS.md`;
 release gate: `docs/PRODUCTION_READINESS.md`.
 
 ## Runtime
@@ -104,7 +104,9 @@ staged endpoint `POST/GET /api/v1/clubs/:c/teams/:t/dfbnet/imports` and
 `…/:id/confirm` — re-validate, re-minimize, server-computed team-scoped
 fingerprint, `dfbnet_imports` record, `DFBNET_IMPORT_*` audit, idempotent player
 upsert with `mode: merge | replace` (replace reconciles the roster). Rate-limited
-(`IMPORT_RATE_LIMITER`). Original CSV never stored or logged.
+(`IMPORT_RATE_LIMITER`). Original CSV never stored or logged. The "Mein Kader"
+panel drives this endpoint for the referee's own team; `players` also has
+`GET/POST/PATCH/DELETE` CRUD (`api/players.ts`, team-scoped, optimistic-locked).
 
 ## Security headers & error shape
 
@@ -116,17 +118,18 @@ structured line.
 
 ## Quality baseline
 
-- Unit: 33 · Worker (Miniflare + D1 `0001–0016`): 66 · e2e (Playwright): 19
-  (+1 skipped) · real-Worker e2e: 4 · build + lint + `npm audit --audit-level=high`:
+- Unit: 33 · Worker (Miniflare + D1 `0001–0016`): 69 · e2e (Playwright): 19
+  (+1 skipped) · real-Worker e2e: 5 · build + lint + `npm audit --audit-level=high`:
   clean.
 - CI: `.github/workflows/ci.yml` (quality, e2e, e2e-worker, security, CodeQL).
   `main` branch protection requires all 5 checks.
 
 ## Known gaps
 
-Tracked in `docs/EPIC_STATUS.md` / `docs/PRODUCTION_READINESS.md`: the DFBnet
-**UI** still keeps opponent rosters in the match blob rather than
-`teams`/`players` (needs the relational roster model — the `/state` delta stays
-the sync surface); no per-resource REST for matches/events beyond the flat
-club-wide CRUD; the weekly logical `d1 export` is policy-only; `ALERT_WEBHOOK_URL`
-must be set in production for alerts to deliver; no `repositories/` layer.
+Tracked in `docs/EPIC_STATUS.md` / `docs/PRODUCTION_READINESS.md`: opponent and
+library rosters deliberately stay in the `/state` sync blob (only the referee's
+own team roster is relational — the "Mein Kader" panel + `players` table +
+staged `/dfbnet/imports`); no per-resource REST for matches/events beyond the
+flat club-wide CRUD (the `/state` delta is the sync surface); the weekly logical
+`d1 export` is policy-only; `ALERT_WEBHOOK_URL` must be set in production for
+alerts to deliver; no `repositories/` layer.
