@@ -70,19 +70,29 @@ export async function putState(request: Request, env: Env, auth: AuthContext, cl
   const now = new Date().toISOString();
 
   await env.DB.prepare("INSERT OR IGNORE INTO team_sync_versions (club_id,team_id,version,updated_at) VALUES (?,?,0,?)").bind(club, team, now).run();
-  const current0 = await env.DB.prepare("SELECT version FROM team_sync_versions WHERE club_id=? AND team_id=?").bind(club, team).first<{ version: number }>();
+
+  // Read the stored snapshot so the batch can write only what actually changed
+  // instead of DELETE-ALL + INSERT-ALL on every 1.5 s client sync.
+  const [current0, storedMatches, storedTournaments] = await Promise.all([
+    env.DB.prepare("SELECT version FROM team_sync_versions WHERE club_id=? AND team_id=?").bind(club, team).first<{ version: number }>(),
+    env.DB.prepare("SELECT id,payload_json AS payloadJson,saved_at AS savedAt FROM matches WHERE club_id=? AND team_id=? AND deleted_at IS NULL").bind(club, team).all<{ id: string; payloadJson: string; savedAt: string | null }>(),
+    env.DB.prepare("SELECT id,payload_json AS payloadJson FROM tournaments WHERE club_id=? AND team_id=?").bind(club, team).all<{ id: string; payloadJson: string }>(),
+  ]);
   if ((current0?.version ?? 0) !== expectedVersion) throw new HttpError(409, "VERSION_CONFLICT", "The team data was changed by another client.");
+  const matchWas = new Map(storedMatches.results.map((row) => [row.id, row]));
+  const tournamentWas = new Map(storedTournaments.results.map((row) => [row.id, row.payloadJson]));
 
   // The version bump and every data statement run in one batch (= one D1
   // transaction). The guard aborts the whole batch if a racing writer bumped
   // the version between the check above and the batch.
+  const matchIds: string[] = [];
+  const tournamentIds: string[] = [];
+  let changedMatches = 0;
+  let changedTournaments = 0;
+
   const statements: D1PreparedStatement[] = [
     env.DB.prepare("UPDATE team_sync_versions SET version=version+1,updated_at=? WHERE club_id=? AND team_id=? AND version=?").bind(now, club, team, expectedVersion),
     abortBatchUnlessOneChange(env.DB, "team_sync_versions", ["club_id", "team_id"], [club, team]),
-    env.DB.prepare("DELETE FROM match_events WHERE club_id=? AND team_id=?").bind(club, team),
-    env.DB.prepare("DELETE FROM matches WHERE club_id=? AND team_id=?").bind(club, team),
-    env.DB.prepare("DELETE FROM tournaments WHERE club_id=? AND team_id=?").bind(club, team),
-    env.DB.prepare("DELETE FROM team_drafts WHERE club_id=? AND team_id=?").bind(club, team),
     env.DB.prepare("INSERT INTO team_rosters (club_id,team_id,payload_json,updated_at) VALUES (?,?,?,?) ON CONFLICT(club_id,team_id) DO UPDATE SET payload_json=excluded.payload_json,updated_at=excluded.updated_at")
       .bind(club, team, boundedJson(rosterLibrary.map((entry) => minimize(entry)), 2_000_000), now),
   ];
@@ -90,21 +100,35 @@ export async function putState(request: Request, env: Env, auth: AuthContext, cl
   for (const raw of tournaments) {
     const tournament = objectValue(minimize(raw));
     const id = domainId(tournament);
+    tournamentIds.push(id);
     const name = typeof tournament.name === "string" ? tournament.name.trim().slice(0, 160) : "";
     if (!name) throw new HttpError(422, "VALIDATION_FAILED", "The request data is invalid.");
-    statements.push(env.DB.prepare("INSERT INTO tournaments (club_id,team_id,id,name,tournament_date,payload_json,version,created_at,updated_at) VALUES (?,?,?,?,?,?,1,?,?)")
-      .bind(club, team, id, name, typeof tournament.date === "string" ? tournament.date.slice(0, 40) : null, boundedJson(tournament, 512_000), now, now));
+    const payloadJson = boundedJson(tournament, 512_000);
+    if (tournamentWas.get(id) === payloadJson) continue; // unchanged
+    changedTournaments += 1;
+    statements.push(env.DB.prepare(`INSERT INTO tournaments (club_id,team_id,id,name,tournament_date,payload_json,version,created_at,updated_at) VALUES (?,?,?,?,?,?,1,?,?)
+      ON CONFLICT(club_id,id) DO UPDATE SET name=excluded.name,tournament_date=excluded.tournament_date,payload_json=excluded.payload_json,version=tournaments.version+1,updated_at=excluded.updated_at`)
+      .bind(club, team, id, name, typeof tournament.date === "string" ? tournament.date.slice(0, 40) : null, payloadJson, now, now));
   }
 
   for (const raw of archive) {
     const saved = objectValue(minimize(raw));
     const state = objectValue(saved.state);
     const id = domainId(state);
+    matchIds.push(id);
     const rawEvents = Array.isArray(state.events) ? state.events.slice(0, 1000) : [];
     const withoutEvents = { ...state, events: undefined };
     const meta = state.meta && typeof state.meta === "object" ? state.meta as Record<string, unknown> : {};
+    const payloadJson = boundedJson(withoutEvents, 512_000);
+    const savedAt = typeof saved.savedAt === "string" ? saved.savedAt : now;
+    const was = matchWas.get(id);
+    if (was && was.payloadJson === payloadJson && was.savedAt === savedAt) continue; // match + events unchanged
+    changedMatches += 1;
     statements.push(env.DB.prepare(`INSERT INTO matches (club_id,team_id,id,match_date,competition,venue,state,payload_json,saved_at,version,created_at,updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,1,?,?)`).bind(club, team, id, typeof state.matchDate === "string" ? state.matchDate.slice(0, 40) : now.slice(0, 10), typeof meta.competition === "string" ? meta.competition.slice(0, 160) : "", typeof meta.venue === "string" ? meta.venue.slice(0, 200) : "", matchStatus(state.phase), boundedJson(withoutEvents, 512_000), typeof saved.savedAt === "string" ? saved.savedAt : now, now, now));
+      VALUES (?,?,?,?,?,?,?,?,?,1,?,?)
+      ON CONFLICT(club_id,id) DO UPDATE SET team_id=excluded.team_id,match_date=excluded.match_date,competition=excluded.competition,venue=excluded.venue,state=excluded.state,payload_json=excluded.payload_json,saved_at=excluded.saved_at,version=matches.version+1,updated_at=excluded.updated_at,deleted_at=NULL`)
+      .bind(club, team, id, typeof state.matchDate === "string" ? state.matchDate.slice(0, 40) : now.slice(0, 10), typeof meta.competition === "string" ? meta.competition.slice(0, 160) : "", typeof meta.venue === "string" ? meta.venue.slice(0, 200) : "", matchStatus(state.phase), payloadJson, savedAt, now, now));
+    statements.push(env.DB.prepare("DELETE FROM match_events WHERE club_id=? AND match_id=?").bind(club, id));
     for (const rawEvent of rawEvents) {
       const event = objectValue(minimize(rawEvent));
       const eventId = domainId(event);
@@ -114,10 +138,20 @@ export async function putState(request: Request, env: Env, auth: AuthContext, cl
     }
   }
 
+  // Drop rows the client no longer has. json_each avoids a bound-parameter blow-up.
+  const matchIdJson = JSON.stringify(matchIds);
+  statements.push(
+    env.DB.prepare("DELETE FROM match_events WHERE club_id=? AND team_id=? AND match_id NOT IN (SELECT value FROM json_each(?))").bind(club, team, matchIdJson),
+    env.DB.prepare("DELETE FROM matches WHERE club_id=? AND team_id=? AND id NOT IN (SELECT value FROM json_each(?))").bind(club, team, matchIdJson),
+    env.DB.prepare("DELETE FROM tournaments WHERE club_id=? AND team_id=? AND id NOT IN (SELECT value FROM json_each(?))").bind(club, team, JSON.stringify(tournamentIds)),
+  );
+
   if (current) {
     const minimized = objectValue(minimize(current));
-    statements.push(env.DB.prepare("INSERT INTO team_drafts (club_id,team_id,match_id,payload_json,updated_at) VALUES (?,?,?,?,?)")
+    statements.push(env.DB.prepare("INSERT INTO team_drafts (club_id,team_id,match_id,payload_json,updated_at) VALUES (?,?,?,?,?) ON CONFLICT(club_id,team_id) DO UPDATE SET match_id=excluded.match_id,payload_json=excluded.payload_json,updated_at=excluded.updated_at")
       .bind(club, team, domainId(minimized), boundedJson(minimized, 1_048_576), now));
+  } else {
+    statements.push(env.DB.prepare("DELETE FROM team_drafts WHERE club_id=? AND team_id=?").bind(club, team));
   }
 
   try {
@@ -127,7 +161,7 @@ export async function putState(request: Request, env: Env, auth: AuthContext, cl
   }
   await writeAudit(env.DB, {
     clubId: club, userId: auth.userId, action: "TEAM_STATE_SYNCED", entityType: "team", entityId: team,
-    metadata: { version: expectedVersion + 1, archive: archive.length, tournaments: tournaments.length, draft: current ? 1 : 0 },
+    metadata: { version: expectedVersion + 1, archive: archive.length, tournaments: tournaments.length, changedMatches, changedTournaments, draft: current ? 1 : 0 },
   });
   return json({ ok: true, version: expectedVersion + 1, updatedAt: now }, requestId);
 }

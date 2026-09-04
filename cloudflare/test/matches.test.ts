@@ -81,6 +81,38 @@ describe("match isolation and optimistic locking", () => {
     expect(d2.current.runningSince).toBe(9999);
   });
 
+  it("writes the whole-team sync incrementally: unchanged rows are not rewritten", async () => {
+    const { cookieA } = await seedTwoTenants();
+    const url = `${ORIGIN}/api/v1/clubs/${CLUB_A}/teams/${TEAM_A}/state`;
+    const savedMatch = (id: string, savedAt: string, phase = "finished") => ({ savedAt, state: { id, phase, matchDate: "2026-09-04", meta: {}, events: [] } });
+    const put = (version: number, archive: unknown[]) => SELF.fetch(url, { method: "PUT", headers: jsonHeaders(cookieA), body: JSON.stringify({ version, archive, deletedIds: [], tournaments: [], teams: [], current: null }) });
+
+    const A = "aaaaaaaa-7777-4777-8777-aaaaaaaaaaaa";
+    const B = "bbbbbbbb-7777-4777-8777-bbbbbbbbbbbb";
+    const C = "cccccccc-7777-4777-8777-cccccccccccc";
+
+    await put(0, [savedMatch(A, "2026-09-04T10:00:00Z"), savedMatch(B, "2026-09-04T10:00:00Z")]);
+    const first = await env.DB.prepare("SELECT id,version,updated_at AS u FROM matches WHERE club_id=? AND team_id=? ORDER BY id").bind(CLUB_A, TEAM_A).all<{ id: string; version: number; u: string }>();
+    expect(first.results.map((r) => r.id)).toEqual([A, B]);
+
+    // re-sync: A unchanged, B changed (new savedAt), C new, (implicitly) nothing removed yet
+    await put(1, [savedMatch(A, "2026-09-04T10:00:00Z"), savedMatch(B, "2026-09-04T11:30:00Z"), savedMatch(C, "2026-09-04T11:30:00Z")]);
+    const second = await env.DB.prepare("SELECT id,version,updated_at AS u FROM matches WHERE club_id=? AND team_id=? ORDER BY id").bind(CLUB_A, TEAM_A).all<{ id: string; version: number; u: string }>();
+    const byId = Object.fromEntries(second.results.map((r) => [r.id, r]));
+    expect(byId[A].version).toBe(1);            // untouched
+    expect(byId[A].u).toBe(first.results[0].u); // updated_at unchanged
+    expect(byId[B].version).toBe(2);            // rewritten
+    expect(byId[C].version).toBe(1);            // inserted
+
+    // re-sync without B -> B removed, A/C stay
+    await put(2, [savedMatch(A, "2026-09-04T10:00:00Z"), savedMatch(C, "2026-09-04T11:30:00Z")]);
+    const third = await env.DB.prepare("SELECT id FROM matches WHERE club_id=? AND team_id=? ORDER BY id").bind(CLUB_A, TEAM_A).all<{ id: string }>();
+    expect(third.results.map((r) => r.id)).toEqual([A, C]);
+
+    const audit = await env.DB.prepare("SELECT metadata_json AS m FROM audit_log WHERE action='TEAM_STATE_SYNCED' ORDER BY created_at").all<{ m: string }>();
+    expect(JSON.parse(audit.results[1].m).changedMatches).toBe(2); // B + C, not A
+  });
+
   it("removes non-whitelisted sensitive roster metadata before persistence", async () => {
     const { cookieA } = await seedTwoTenants();
     const url = `${ORIGIN}/api/v1/clubs/${CLUB_A}/teams/${TEAM_A}/state`;
