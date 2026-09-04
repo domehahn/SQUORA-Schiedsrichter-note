@@ -1,78 +1,107 @@
 # Current architecture
 
-Status: 2026-09-03, commit `96112ef`. Supersedes the pre-D1 baseline.
-Per-epic detail: `docs/EPIC_STATUS.md`.
+Status: 2026-09-04, commit `521e083`. Per-epic detail: `docs/EPIC_STATUS.md`;
+release gate: `docs/PRODUCTION_READINESS.md`.
 
 ## Runtime
 
 React 19 / Vite PWA served by a single Cloudflare Worker
 (`cloudflare/worker.ts`). The Worker serves the static build (`ASSETS`,
-`run_worker_first`), renders the login form, and exposes the `/api/v1` REST API.
+`run_worker_first`), renders the login form and exposes the `/api/v1` REST API.
 Production is served at `squora.de/schiedsrichter-note/` (product decision — no
-dedicated origin). The Worker strips the `/schiedsrichter-note` prefix from every
-incoming path (`MOUNT_PATH`) and prefixes every URL it emits. Vite PWA precaches
-static assets and forces `NetworkOnly` for `/api/*` and `/auth/*` at any depth.
+dedicated origin). The Worker strips the `/schiedsrichter-note` prefix
+(`MOUNT_PATH`) from every incoming path and prefixes every URL it emits. Vite
+PWA precaches static assets and forces `NetworkOnly` for `/api/` and `/auth/` at
+any path depth (`scripts/verify-service-worker.mjs` asserts this in CI).
+
+A `scheduled` handler runs daily (`triggers.crons`): retention cleanup
+(`services/retention.ts`) and a threshold alert self-check (`services/alerting.ts`).
 
 ## Authentication & sessions
 
-- Accounts currently come from the `AUTH_USERS` bootstrap secret; D1 `users` is
-  the record they resolve to. A self-serve invite/registration flow is not built.
-- Login: PBKDF2 password check → a random 256-bit session token; only
-  `SHA-256(token)` is stored in `sessions`. Cookie `HttpOnly; Secure;
-  SameSite=Strict`, 8 h expiry.
-- Sessions are individually and bulk revocable (`/api/v1/auth/logout`,
-  `/logout-all`). `optionalAuth` re-checks `users.status='active'` and
-  `revoked_at IS NULL AND expires_at > now` on every request, so disabling an
-  account or revoking a session takes effect immediately.
+- D1 `users` is authoritative; the production account exists only in D1 (no
+  runtime credential secret). Passwords are PBKDF2-SHA256, 600 000 iterations.
+- Login → a random 256-bit session token; only `SHA-256(token)` is stored in
+  `sessions`. Cookie `HttpOnly; Secure; SameSite=Strict`, 8 h expiry.
+- Sessions are individually and bulk revocable. `optionalAuth` re-checks
+  `users.status='active'` and `revoked_at IS NULL AND expires_at > now` on every
+  request — disabling an account or revoking a session takes effect immediately.
+- Membership lifecycle API (invite / role / team / status / removal) with
+  `MEMBER_*` audit; `active` is required everywhere; last-owner invariant.
 
 ## Tenant & authorization model
 
 - D1 is authoritative: `users → memberships (role, status, team_id?) → clubs →
-  teams → matches/match_events/tournaments/players/dfbnet_imports/audit_log`.
+  teams → matches/match_events/tournaments/players/dfbnet_imports/audit_log`,
+  plus `team_sync_versions`/`team_drafts`/`team_rosters` and `legacy_migrations`.
 - `middleware/tenant.ts` produces a `TenantContext` (`requireTenantAccess`) or
   `TeamContext` (`requireTeamAccess`) — active session → active membership →
-  role permission — before any club/team query. No handler touches club data
-  without one.
-- Club id / team id / entity id from the URL or body are untrusted selectors.
-  Foreign or missing resources return 404, never 403/500.
-- Composite primary and foreign keys (`(club_id, id)`,
-  `(club_id, team_id) → teams`) make cross-tenant rows impossible at the DB
-  level.
-- RBAC: 5 roles, 17 permissions in `auth/roles.ts` / `auth/permissions.ts`
-  (`docs/architecture/RBAC.md`).
+  role permission — before any club/team query. `denyTeamScoped()` hides the
+  club-wide match/export endpoints from a team-scoped membership.
+- URL / body identifiers are untrusted selectors; foreign or missing resources
+  return 404, never 403/500.
+- Composite primary and foreign keys (`(club_id, id)`, `(club_id, team_id) →
+  teams`) make cross-tenant rows impossible at the DB level.
+- RBAC: 5 roles, 17 permissions (`auth/roles.ts` / `auth/permissions.ts`;
+  `docs/architecture/RBAC.md`).
 
 ## Data & synchronization
 
 - The team (Jugend) is the isolation unit inside a club. Each `(club, team)` has
-  its own `team_sync_versions` (aggregate optimistic-lock counter), `team_drafts`
-  (live match + clock) and `team_rosters` (minimized opponent library).
+  its own `team_sync_versions` (aggregate optimistic-lock counter),
+  `team_drafts` (live match + clock) and `team_rosters` (minimized roster
+  library).
 - `GET/PUT /api/v1/clubs/:club/teams/:team/state` is the whole-team snapshot
-  (archive, tournaments, roster library, live match). PUT is guarded by
-  `version`; a mismatch is 409 `VERSION_CONFLICT` with rollback of the aggregate
-  counter on batch failure.
-- Individual match CRUD (`/matches`, `/matches/:id`) is cursor-paginated,
-  soft-deletes (`deleted_at`), per-row `version`, and writes `audit_log`.
+  (archive, tournaments, roster library, live match). PUT is optimistically
+  locked: the version bump **and** the data write run in one `DB.batch()`
+  transaction with an abort-guard, so it is atomic under truly parallel writers;
+  a mismatch is 409 `VERSION_CONFLICT`. The write is **incremental** — unchanged
+  matches (and their events) and tournaments are skipped; only changed/new rows
+  are upserted and only removed rows are deleted.
+- Individual match CRUD (`/matches`, `/matches/:id`) requires a `teamId` of the
+  club, is cursor-paginated, soft-deletes (`deleted_at`), per-row `version` in
+  one atomic batch, and writes `audit_log`.
+- Bodies with a small fixed shape are validated by `core/validation.ts`
+  `parseBody(value, spec)` which rejects undeclared fields (422 `UNKNOWN_FIELD`).
 - `FORBIDDEN_DFBNET_FIELDS` strips birthdate/pass/nationality/eligibility from
-  every synced payload server-side (`api/state.ts`).
+  every synced payload server-side.
+
+## Lifecycle & retention
+
+- Club deletion is a 30-day grace window: `DELETE /clubs/:id` sets
+  `status='deleted'` + `deletion_due_at` (invisible to every tenant query at
+  once, data retained); `POST /clubs/:id/deletion/cancel` restores it; the daily
+  cron `runClubPurge` cascades via `purgeClub` once due (`CLUB_DELETED`).
+- Account deletion tombstones the `users` row, removes memberships, revokes
+  sessions, purges the departing owner's solely-owned clubs immediately.
+- `GET /clubs/:id/export` returns the full club tree (`club.manage`,
+  rate-limited, `EXPORT_CREATED`).
+- Daily retention: expired/revoked sessions purged; `audit_log` trimmed at 24
+  months, `dfbnet_imports` at 12.
 
 ## Client storage & crypto
 
-- One encrypted snapshot per `(club, team)` in IndexedDB
+- One encrypted snapshot per `(userId, club, team)` in IndexedDB
   (`encryptedCache.ts`), AES-256-GCM, key derived with PBKDF2-HMAC-SHA256
-  (600 000 iterations, 128-bit salt), non-extractable, memory only. Passphrase
-  ≥ 12 chars, no maximum.
-- `localStorage` holds only non-sensitive UI state (active scope key, sound
-  toggle) plus legacy keys that are read once by the migration flow.
-- Encryption model rationale: `docs/architecture/ADR-001-encryption-model.md`
-  (Model C hybrid).
+  (600 000 iterations, 128-bit salt), non-extractable, memory only. The gate
+  asks for a passphrase **only** when an encrypted cache already exists on the
+  device; online-only users never see it.
+- Club/team selection is driven purely by memberships (0 → onboarding, 1 →
+  auto, n → own-clubs list). The passphrase is never a club gate.
+- `localStorage` holds only non-sensitive UI state; legacy plaintext keys are
+  read once by the migration flow.
+- Encryption model: `docs/architecture/ADR-001-encryption-model.md` (Model B in
+  effect for server data; Model C for the offline cache; note E2E is a target).
 
 ## DFBnet import
 
-`src/integrations/dfbnet/` — `parser` (RFC-4180 state machine), `schema`
-(whitelist + `DFBNET_LIMITS`), `validator`, `mapper`, `fingerprint`, `provider`
-(`RosterProvider` / `DfbnetCsvProvider`). Import runs client-side into the
-caller's authorized team; the original CSV is never stored or logged. A staged
-server endpoint with a `dfbnet_imports` audit record is not yet built.
+Client `src/integrations/dfbnet/` (RFC-4180 parser, `DFBNET_LIMITS`, schema
+detection, mapper, fingerprint, `RosterProvider`/`DfbnetCsvProvider`). Server:
+staged endpoint `POST/GET /api/v1/clubs/:c/teams/:t/dfbnet/imports` and
+`…/:id/confirm` — re-validate, re-minimize, server-computed team-scoped
+fingerprint, `dfbnet_imports` record, `DFBNET_IMPORT_*` audit, idempotent player
+upsert with `mode: merge | replace` (replace reconciles the roster). Rate-limited
+(`IMPORT_RATE_LIMITER`). Original CSV never stored or logged.
 
 ## Security headers & error shape
 
@@ -80,17 +109,22 @@ server endpoint with a `dfbnet_imports` audit record is not yet built.
 COOP/COEP/CORP, `frame-ancestors 'none'`, Permissions-Policy. Errors are
 `{ error: { code, message }, requestId }`; internal detail only via
 `console.error`. Every response carries `X-Request-Id`; every request logs a
-structured line (`requestId`, `userId`, `clubId`, route, status, `durationMs`).
+structured line.
 
 ## Quality baseline
 
-- Unit: 33 · Worker (Miniflare + D1 migrations): 17 · e2e (Playwright): 19 (+1
-  skipped) · build + lint + `npm audit`: clean.
-- CI: `.github/workflows/ci.yml` (quality, e2e, security, CodeQL).
+- Unit: 33 · Worker (Miniflare + D1 `0001–0016`): 64 · e2e (Playwright): 19
+  (+1 skipped) · real-Worker e2e: 3 · build + lint + `npm audit --audit-level=high`:
+  clean.
+- CI: `.github/workflows/ci.yml` (quality, e2e, e2e-worker, security, CodeQL).
+  `main` branch protection requires all 5 checks.
 
 ## Known gaps
 
-Tracked in `docs/EPIC_STATUS.md` and `docs/PRODUCTION_READINESS.md`: placeholder
-D1 ids, no real-Worker e2e suite, unrehearsed restore/rollback, missing
-export/deletion endpoints, audit coverage gaps, rate limiting limited to login,
-no legacy KV→D1 migration endpoint.
+Tracked in `docs/EPIC_STATUS.md` / `docs/PRODUCTION_READINESS.md`: the DFBnet
+**UI** still keeps opponent rosters in the match blob rather than
+`teams`/`players` (needs the relational roster model); no incremental relational
+match/event API yet (the `/state` snapshot is the sync surface); season-based
+match cleanup and the weekly logical `d1 export` are policy-only;
+`ALERT_WEBHOOK_URL` must be set in production for alerts to deliver; no
+`repositories/` layer.
