@@ -36,7 +36,7 @@ the release is NOT READY.
 | CI | 🟢 | `ci.yml`: typecheck, oxlint, build, SW-policy, unit (36), worker (85), Playwright (19), Worker+D1 E2E, `npm audit --audit-level=high` (hard fail), CodeQL | — |
 | Full-history security scan | 🟢 | `security` job `fetch-depth: 0` + `gitleaks-action@v2` (`.gitleaks.toml`) + `check-pii-history.mjs`; `GIT_HISTORY_PII_RESPONSE.md` assessed findings (only the maintainer's own address, no secrets, no third-party PII) | History still contains that address; rewrite plan documented, not executed |
 | Cloudflare staging runtime verification | 🟡 | `playwright.staging.config.ts` + `tests/staging/smoke.spec.ts` + gated `staging-e2e` CI job (auth 401, CSRF 403, cookie flags, foreign-id 404, CSP) | Not yet run — needs `RUN_STAGING_E2E`, `CLOUDFLARE_*` and `STAGING_*` secrets/vars set, and a first green run recorded |
-| D1 EU jurisdiction | 🟡 | `DEPLOYMENT.md` records the three database ids and the `wrangler d1 info` verification step | Region not provable from the repo — a maintainer must run the check for all three DBs and record the output |
+| D1 EU jurisdiction | 🟢 | `wrangler d1 list` on 2026-09-04: `schiedsrichter-note-{development,staging,production}` all report `jurisdiction = eu`. Re-verify after any DB recreation (`DEPLOYMENT.md`) | An EU D1 database does not pin every Worker invocation to the EU — see the origin/localisation note; Regional Services / Customer Metadata Boundary remain a separate governance option |
 | Origin isolation | 🟡 (accepted) | Product decision to stay on `squora.de/schiedsrichter-note/`; path is not a browser security boundary | Any XSS in another app on `squora.de` could reach this app's API on the shared origin. Governance assumption: **no other third-party/CMS app shares that origin.** Must be confirmed and kept true |
 | Backup / restore | 🟢 | 2026-09-04 D1 Time Travel rehearsal (marker after bookmark → restore → marker gone, migrations intact); `runbooks/database-restore.md`; production wipe on 2026-09-04 captured a bookmark first | Weekly off-platform logical `wrangler d1 export` is still policy-only (🟡 as its own line below) |
 | Weekly off-platform export | 🟡 | documented in `DATA_RETENTION.md` | Job not implemented — manual `wrangler d1 export` until then |
@@ -58,7 +58,7 @@ the release is NOT READY.
 - **CI** — 🟢.
 - **Full-history security scan** — 🟢.
 - **Cloudflare staging** — 🟡. Suite + job exist; first green run outstanding.
-- **D1 EU** — 🟡. Verification step documented; not yet recorded.
+- **D1 EU** — 🟢. All three databases `jurisdiction = eu` (`wrangler d1 list`, 2026-09-04).
 - **Origin isolation** — 🟡, accepted as a governance assumption.
 - **Backup / restore** — 🟢 (Time Travel); weekly export job 🟡.
 - **Rollback** — 🟢.
