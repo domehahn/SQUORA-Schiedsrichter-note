@@ -101,7 +101,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: npm audit (high+ fails the build)
-        run: npm audit --audit-level=high
+        run: npm audit --audit-level=high --registry=https://registry.npmjs.com
       - name: Guard against committed secrets
         run: |
           set -uo pipefail
