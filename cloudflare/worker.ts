@@ -242,7 +242,14 @@ export default {
         response = withHeaders(await env.ASSETS.fetch(new Request(new URL(path, url.origin), request)), requestId);
       } else {
         try { auth = await requireAuth(request, env.DB); } catch (error) {
-          if (!isApi(path) && request.method === "GET") {
+          // Only an actual page navigation (Accept: text/html) should be swapped
+          // for the login page. A script/stylesheet/module sub-resource request
+          // (the SPA shell's own JS/CSS, requested by an expired-session tab, or
+          // theme-init.js) must fall through to a real error instead — serving
+          // login HTML in place of a .js file makes the browser reject it for a
+          // MIME-type mismatch, which reads as the whole app being broken rather
+          // than "please sign in again".
+          if (!isApi(path) && request.method === "GET" && request.headers.get("Accept")?.includes("text/html")) {
             response = loginPage(requestId);
             recordRequest(startedAt, request, response, { requestId });
             return response;

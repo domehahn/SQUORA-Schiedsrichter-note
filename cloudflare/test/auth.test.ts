@@ -25,6 +25,28 @@ describe("D1 authentication and revocable sessions", () => {
     expect((await SELF.fetch(`${ORIGIN}/api/v1/me`, { headers: { Cookie: cookie } })).status).toBe(401);
   });
 
+  it("shows the login page for an unauthenticated navigation, but never swaps a script/style sub-resource request for login HTML", async () => {
+    // A real browser navigation sends Accept: text/html — that's the only case
+    // that should render the login page for a non-API path.
+    const nav = await SELF.fetch(`${ORIGIN}/assets/index-anything.js`, { headers: { Accept: "text/html,application/xhtml+xml" } });
+    expect(nav.status).toBe(200);
+    expect(nav.headers.get("Content-Type")).toContain("text/html");
+    expect(await nav.text()).toContain("Anmelden");
+
+    // A <script>/<link> sub-resource request never sends Accept: text/html —
+    // if the session is invalid when this fires (e.g. it expired while the
+    // SPA shell was already loaded), the response must not be HTML: the
+    // browser rejects a text/html payload for a .js/.css request with a MIME
+    // error, which is a worse failure mode than a clean error status.
+    for (const accept of ["*/*", "text/css,*/*;q=0.1", undefined]) {
+      const headers: Record<string, string> = {};
+      if (accept) headers.Accept = accept;
+      const asset = await SELF.fetch(`${ORIGIN}/assets/index-anything.js`, { headers });
+      expect(asset.status).not.toBe(200);
+      expect(asset.headers.get("Content-Type")).not.toContain("text/html");
+    }
+  });
+
   it("rejects invalid credentials generically and rejects cross-origin login", async () => {
     await seedUser(USER_A, "user-a@example.invalid");
     const invalid = await SELF.fetch(`${ORIGIN}/api/v1/auth/login`, { method: "POST", headers: { Origin: ORIGIN, "Content-Type": "application/json" }, body: JSON.stringify({ email: "user-a@example.invalid", password: "wrong" }) });
