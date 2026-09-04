@@ -1,6 +1,7 @@
 import { pbkdf2, randomBytes } from "node:crypto";
 
-const ITERATIONS = 100_000;
+const ITERATIONS = 600_000;
+const MIN_PASSWORD_LENGTH = 12;
 
 function readHiddenPassword() {
   if (!process.stdin.isTTY) {
@@ -51,7 +52,9 @@ function readHiddenPassword() {
 }
 
 const password = await readHiddenPassword();
-if (!password || password.length > 200) throw new Error("Passwort muss zwischen 1 und 200 Zeichen lang sein");
+if (password.length < MIN_PASSWORD_LENGTH || password.length > 200) {
+  throw new Error(`Passwort muss zwischen ${MIN_PASSWORD_LENGTH} und 200 Zeichen lang sein`);
+}
 const salt = randomBytes(16);
 const hash = await new Promise((resolve, reject) => {
   pbkdf2(password, salt, ITERATIONS, 32, "sha256", (error, derived) => error ? reject(error) : resolve(derived));
