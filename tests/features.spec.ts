@@ -164,7 +164,8 @@ test("trennt Vereinsdaten: neuer Verein sieht das Archiv des anderen nicht", asy
   // Mannschaft sperren -> Gate -> zweiten Verein anlegen
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: /Testverein/ }).click();
-  await page.getByRole("button", { name: /Verein \/ Mannschaft wechseln|Anderer Verein/ }).click();
+  await page.getByRole("button", { name: /Mannschaft wechseln/ }).click();
+  await page.getByRole("button", { name: /Verein wechseln|Anderer Verein/ }).click();
   await page.getByRole("button", { name: /Weiteren Verein anlegen/ }).click();
   await page.getByLabel("Vereinsname").fill("Zweiter Verein");
   await page.getByRole("button", { name: /Verein anlegen/ }).click();

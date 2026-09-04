@@ -306,7 +306,7 @@ export function TenantGate({ rememberedId, onUnlock }: Props) {
             <button type="button" className="tenant-link" onClick={() => { setWantOffline(true); setError(null); }}><Icon name="download" /> Offline-Nutzung einrichten</button>
           </>}
           {club && team && <LegacyMigrationPanel club={club} team={team} />}
-          <button type="button" className="tenant-link" onClick={() => { setError(null); setStep(teams.length > 1 ? "team" : "club"); }}>{teams.length > 1 ? "Mannschaft wechseln" : "Verein / Mannschaft wechseln"}</button>
+          <button type="button" className="tenant-link" onClick={() => { setError(null); setStep("team"); }}>Mannschaft wechseln / anlegen</button>
         </>}
       </form>
       <form method="post" action={`${import.meta.env.BASE_URL}auth/logout`} className="tenant-logout"><button><Icon name="logout" /> Abmelden</button></form>
