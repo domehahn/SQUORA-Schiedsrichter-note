@@ -6,7 +6,7 @@ import { objectValue, stringValue } from "../core/validation";
 import { denyTeamScoped, requireTenantAccess } from "../middleware/tenant";
 import { writeAudit } from "../services/audit-service";
 
-const INVITED_PASSWORD_HASH = "pbkdf2-sha256$600000$00000000000000000000000000000000$0000000000000000000000000000000000000000000000000000000000000000";
+const DUMMY_HASH = "pbkdf2-sha256$600000$00000000000000000000000000000000$0000000000000000000000000000000000000000000000000000000000000000";
 type MembershipStatus = "invited" | "active" | "suspended" | "removed";
 
 function membershipStatus(value: unknown): value is MembershipStatus {
@@ -63,7 +63,7 @@ export async function inviteMember(request: Request, env: Env, auth: AuthContext
   if (!user) {
     user = { id: newId(), status: "invited" };
     await env.DB.prepare("INSERT INTO users (id,email,display_name,password_hash,status,created_at,updated_at) VALUES (?,?,?,?, 'invited',?,?)")
-      .bind(user.id, email, displayName, INVITED_PASSWORD_HASH, now, now).run();
+      .bind(user.id, email, displayName, DUMMY_HASH, now, now).run();
   }
   const existing = await env.DB.prepare("SELECT status FROM memberships WHERE club_id=? AND user_id=?").bind(context.clubId, user.id).first();
   if (existing) throw new HttpError(409, "MEMBERSHIP_EXISTS", "A membership already exists for this account.");
