@@ -22,7 +22,9 @@ minors (see `DFBNET_DATA_HANDLING.md`).
 
 ## Implementation status
 
-Retention windows are policy today. The rolling cleanup jobs (season cleanup,
-`sessions` purge, `dfbnet_imports` / `audit_log` trim) and the 30-day club grace
-window are **not yet implemented** — tracked in `docs/PRODUCTION_READINESS.md`.
-Until then, deletion is on request via the procedures in `DATA_DELETION.md`.
+A daily cron (`triggers.crons` → `worker.ts` `scheduled` → `services/retention.ts`)
+now purges expired/revoked `sessions`, trims `audit_log` beyond 24 months and
+`dfbnet_imports` beyond 12 months. Still policy-only: season-based match/tournament
+cleanup, the 30-day club-deletion grace window, and the weekly encrypted logical
+export — tracked in `docs/PRODUCTION_READINESS.md`. Request-based deletion is in
+`DATA_DELETION.md`.

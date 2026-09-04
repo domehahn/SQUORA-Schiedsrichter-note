@@ -29,7 +29,7 @@ Status as of commit `9742ec8` — 2026-09-04.
 | 19 | Dedicated security suite | 🟢 | `cloudflare/test/security/{csrf,session,bola,rbac,concurrency,rate-limit}.test.ts` in the `test:worker` gate |
 | 20 | Rate limiting beyond login | 🟢 | `EXPORT_RATE_LIMITER` (5/60s), `IMPORT_RATE_LIMITER` (20/60s); `core/rate-limit.ts` composite IP+account+tenant+endpoint key; `rate-limit.test.ts` |
 | 21 | Legacy KV → D1 migration endpoint (idempotent, auditable) | 🟢 | authenticated list/read/migrate endpoints; verified source fingerprint, stored `legacyTenantId → club/team`, idempotency, no source deletion, audit events; `legacy-migration.test.ts` |
-| 22 | Observability operational (dashboards / alerts) | 🟡 | `wrangler.jsonc` observability on; no alerting wired |
+| 22 | Observability operational (dashboards / alerts) | 🟡 | invocation logging on; daily cron (`services/alerting.ts`) posts a summary to `ALERT_WEBHOOK_URL` when failed-login / rate-limit / import-failure thresholds are crossed — needs the secret set in production to be live |
 | 23 | Incident response documented | 🟢 | `docs/runbooks/incident-response.md` |
 
 Legend: 🟢 done · 🟡 partial · 🔴 not started.
@@ -37,13 +37,13 @@ Legend: 🟢 done · 🟡 partial · 🔴 not started.
 ## Verdict
 
 **CONDITIONALLY READY.** All code, data-safety, recovery and deployment gates are
-green. Item 22 remains an operational follow-up: Cloudflare invocation logging
-is active, but an external 5xx/auth/import-failure notification channel has not
-yet been connected.
+green. Item 22 is code-complete (a daily cron runs retention cleanup and a
+threshold self-check) but needs `ALERT_WEBHOOK_URL` set as a production secret to
+actually deliver notifications.
 
 ## Minimum path to READY
 
-1. Wire at least one external alert channel for 5xx spikes, repeated auth
-   failures and import failures (item 22).
-2. Schedule the policy-defined retention cleanup and weekly encrypted logical
-   export jobs.
+1. `wrangler secret put ALERT_WEBHOOK_URL` in production (Slack-compatible
+   incoming webhook) so the scheduled self-check can deliver (item 22).
+2. Add the weekly encrypted logical `wrangler d1 export` job (retention cleanup
+   itself now runs daily via `triggers.crons`).

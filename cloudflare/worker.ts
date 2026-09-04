@@ -11,6 +11,8 @@ import { confirmDfbnetImport, createDfbnetImport, listDfbnetImports } from "./ap
 import { requireAuth, type AuthContext } from "./auth/session";
 import { errorResponse, HttpError, recordRequest, SECURITY_HEADERS, withHeaders } from "./core/http";
 import { readLegacy } from "./legacy/kv-migration";
+import { checkAndAlert } from "./services/alerting";
+import { runRetention } from "./services/retention";
 
 /**
  * The application is mounted at squora.de/schiedsrichter-note/. Every incoming
@@ -196,5 +198,19 @@ export default {
     for (const [name, value] of Object.entries(SECURITY_HEADERS)) if (!response.headers.has(name)) response.headers.set(name, value);
     recordRequest(startedAt, request, response, { requestId, userId: auth?.userId });
     return response;
+  },
+
+  async scheduled(_event, env, ctx): Promise<void> {
+    const requestId = crypto.randomUUID();
+    ctx.waitUntil((async () => {
+      try {
+        const retention = await runRetention(env.DB);
+        console.log(JSON.stringify({ requestId, level: "info", code: "RETENTION_RUN", ...retention }));
+        const alerts = await checkAndAlert(env);
+        if (alerts.length) console.log(JSON.stringify({ requestId, level: "warn", code: "ALERT_SENT", alerts }));
+      } catch {
+        console.error(JSON.stringify({ requestId, level: "error", code: "SCHEDULED_FAILED" }));
+      }
+    })());
   },
 } satisfies ExportedHandler<Env>;
