@@ -37,6 +37,24 @@ describe("team roster (players) CRUD", () => {
     expect((await SELF.fetch(url(CLUB_A, TEAM_A), { headers: { Cookie: cookieA } })).status).toBe(200);
   });
 
+  it("stores and updates pass number + birthdate, rejecting a malformed birthdate", async () => {
+    const { cookieA } = await seedTwoTenants();
+    const created = await SELF.fetch(url(CLUB_A, TEAM_A), { method: "POST", headers: jsonHeaders(cookieA), body: JSON.stringify({ name: "Max Testspieler", shirtNumber: "7", passNumber: "0100-0001", birthdate: "01.01.2014" }) });
+    expect(created.status).toBe(201);
+    const { player } = await created.json<{ player: { id: string; version: number; passNumber: string; birthdate: string } }>();
+    expect(player).toMatchObject({ passNumber: "0100-0001", birthdate: "01.01.2014" });
+
+    const list = await (await SELF.fetch(url(CLUB_A, TEAM_A), { headers: { Cookie: cookieA } })).json<{ players: { passNumber: string | null; birthdate: string | null }[] }>();
+    expect(list.players[0]).toMatchObject({ passNumber: "0100-0001", birthdate: "01.01.2014" });
+
+    const bad = await SELF.fetch(url(CLUB_A, TEAM_A, `/${player.id}`), { method: "PATCH", headers: jsonHeaders(cookieA), body: JSON.stringify({ version: player.version, name: "Max Testspieler", birthdate: "2014" }) });
+    expect(bad.status).toBe(422);
+
+    const cleared = await SELF.fetch(url(CLUB_A, TEAM_A, `/${player.id}`), { method: "PATCH", headers: jsonHeaders(cookieA), body: JSON.stringify({ version: player.version, name: "Max Testspieler", passNumber: "", birthdate: "" }) });
+    expect(cleared.status).toBe(200);
+    expect((await cleared.json<{ player: { passNumber: string | null; birthdate: string | null } }>()).player).toMatchObject({ passNumber: null, birthdate: null });
+  });
+
   it("rejects a duplicate externalId in the same team", async () => {
     const { cookieA } = await seedTwoTenants();
     const body = JSON.stringify({ name: "A", externalId: "SYN-1" });

@@ -20,6 +20,21 @@ export function integerValue(source: Record<string, unknown>, key: string, optio
   return value as number;
 }
 
+const BIRTHDATE_RE = /^(\d{2}\.\d{2}\.\d{4}|\d{4}-\d{2}-\d{2})$/u;
+
+/**
+ * A player birthdate as it appears on a DFBnet export (`TT.MM.JJJJ`) or ISO
+ * (`YYYY-MM-DD`). Empty / missing → null. Any other shape is rejected.
+ * Only ever stored on the referee's own-team relational roster (`players`).
+ */
+export function birthdateValue(value: unknown): string | null {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "string" || !BIRTHDATE_RE.test(value.trim())) {
+    throw new HttpError(422, "VALIDATION_FAILED", "The birthdate format is invalid.");
+  }
+  return value.trim();
+}
+
 export function boundedJson(value: unknown, maxBytes: number): string {
   const encoded = JSON.stringify(value ?? {});
   if (new TextEncoder().encode(encoded).byteLength > maxBytes) throw new HttpError(422, "VALIDATION_FAILED", "The request data is invalid.");

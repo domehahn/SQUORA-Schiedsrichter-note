@@ -161,7 +161,7 @@ describe("match isolation and optimistic locking", () => {
     expect(JSON.parse(audit!.m).shedOldMatches).toBe(1);
   });
 
-  it("removes non-whitelisted sensitive roster metadata before persistence", async () => {
+  it("keeps the pass number but strips the birthdate from the roster library blob", async () => {
     const { cookieA } = await seedTwoTenants();
     const url = `${ORIGIN}/api/v1/clubs/${CLUB_A}/teams/${TEAM_A}/state`;
     const teamId = crypto.randomUUID();
@@ -169,12 +169,13 @@ describe("match isolation and optimistic locking", () => {
     const payload = {
       version: 0,
       archive: [], tournaments: [], current: null,
-      teams: [{ id: teamId, name: "Synthetic team", roster: [{ id: playerId, name: "Max Testspieler", number: "7", pass: "0100-0001", birthdate: "01.01.2014" }] }],
+      teams: [{ id: teamId, name: "Synthetic team", roster: [{ id: playerId, name: "Max Testspieler", number: "7", pass: "0100-0001", birthdate: "01.01.2014", nationality: "XX" }] }],
     };
     expect((await SELF.fetch(url, { method: "PUT", headers: jsonHeaders(cookieA), body: JSON.stringify(payload) })).status).toBe(200);
     const text = await (await SELF.fetch(url, { headers: { Cookie: cookieA } })).text();
     expect(text).toContain("Max Testspieler");
-    expect(text).not.toContain("0100-0001");
-    expect(text).not.toContain("01.01.2014");
+    expect(text).toContain("0100-0001"); // pass number belongs on the referee match sheet
+    expect(text).not.toContain("01.01.2014"); // birthdate only ever lives on the players table
+    expect(text).not.toContain("\"XX\""); // club-external attribute stripped
   });
 });

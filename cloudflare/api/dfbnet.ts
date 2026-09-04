@@ -1,9 +1,9 @@
 import type { AuthContext } from "../auth/session";
-import { minimize } from "../core/dfbnet";
+import { minimize, ROSTER_IMPORT_FORBIDDEN_DFBNET_FIELDS } from "../core/dfbnet";
 import { HttpError, json, readJson, requireSameOrigin } from "../core/http";
 import { clientIp, enforceRateLimit } from "../core/rate-limit";
 import { isId, newId } from "../core/id";
-import { objectValue, stringValue } from "../core/validation";
+import { birthdateValue, objectValue, stringValue } from "../core/validation";
 import { requireTeamAccess } from "../middleware/tenant";
 import { writeAudit } from "../services/audit-service";
 
@@ -15,6 +15,8 @@ interface RosterPlayer {
   firstName: string | null;
   shirtNumber: string | null;
   externalId: string | null;
+  passNumber: string | null;
+  birthdate: string | null;
 }
 
 type RosterMode = "merge" | "replace";
@@ -34,12 +36,14 @@ function parseRoster(value: unknown): RosterInput {
     throw new HttpError(422, "VALIDATION_FAILED", "The roster payload is invalid.");
   }
   const players = raw.map((entry) => {
-    const player = objectValue(minimize(entry));
+    const player = objectValue(minimize(entry, ROSTER_IMPORT_FORBIDDEN_DFBNET_FIELDS));
     return {
       name: stringValue(player, "name", { min: 1, max: 120 })!,
       firstName: stringValue(player, "firstName", { max: 120, optional: true }) ?? null,
       shirtNumber: stringValue(player, "shirtNumber", { max: 8, optional: true }) ?? null,
       externalId: stringValue(player, "externalId", { max: 120, optional: true }) ?? null,
+      passNumber: stringValue(player, "passNumber", { max: 40, optional: true }) ?? null,
+      birthdate: birthdateValue(player.birthdate),
     };
   });
   const mode = stringValue(source, "mode", { max: 10, optional: true }) ?? "merge";
@@ -50,7 +54,7 @@ function parseRoster(value: unknown): RosterInput {
 /** Stable content hash over the normalized roster, scoped to team + mode, independent of client input. */
 async function fingerprint(teamId: string, mode: RosterMode, players: RosterPlayer[]): Promise<string> {
   const rows = players
-    .map((p) => [p.externalId ?? "", p.name, p.firstName ?? "", p.shirtNumber ?? ""])
+    .map((p) => [p.externalId ?? "", p.name, p.firstName ?? "", p.shirtNumber ?? "", p.passNumber ?? "", p.birthdate ?? ""])
     .sort((a, b) => (a.join(" ") < b.join(" ") ? -1 : 1));
   const canonical = JSON.stringify([teamId, mode, ...rows]);
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(canonical)));
@@ -77,21 +81,21 @@ function upsertStatements(db: D1Database, clubId: string, teamId: string, player
   for (const player of players) {
     if (player.externalId) {
       statements.push(db.prepare(
-        "INSERT INTO players (club_id,id,team_id,external_id,name,shirt_number,version,created_at,updated_at) " +
-        "VALUES (?,?,?,?,?,?,1,?,?) " +
+        "INSERT INTO players (club_id,id,team_id,external_id,name,shirt_number,pass_number,birthdate,version,created_at,updated_at) " +
+        "VALUES (?,?,?,?,?,?,?,?,1,?,?) " +
         "ON CONFLICT(club_id,team_id,external_id) DO UPDATE SET " +
-        "name=excluded.name, shirt_number=excluded.shirt_number, updated_at=excluded.updated_at, version=players.version+1",
-      ).bind(clubId, newId(), teamId, player.externalId, player.name, player.shirtNumber, now, now));
+        "name=excluded.name, shirt_number=excluded.shirt_number, pass_number=excluded.pass_number, birthdate=excluded.birthdate, updated_at=excluded.updated_at, version=players.version+1",
+      ).bind(clubId, newId(), teamId, player.externalId, player.name, player.shirtNumber, player.passNumber, player.birthdate, now, now));
     } else {
       statements.push(db.prepare(
-        "INSERT INTO players (club_id,id,team_id,external_id,name,shirt_number,version,created_at,updated_at) " +
-        "SELECT ?,?,?,NULL,?,?,1,?,? " +
+        "INSERT INTO players (club_id,id,team_id,external_id,name,shirt_number,pass_number,birthdate,version,created_at,updated_at) " +
+        "SELECT ?,?,?,NULL,?,?,?,?,1,?,? " +
         "WHERE NOT EXISTS (SELECT 1 FROM players WHERE club_id=? AND team_id=? AND external_id IS NULL AND name=?)",
-      ).bind(clubId, newId(), teamId, player.name, player.shirtNumber, now, now, clubId, teamId, player.name));
+      ).bind(clubId, newId(), teamId, player.name, player.shirtNumber, player.passNumber, player.birthdate, now, now, clubId, teamId, player.name));
       statements.push(db.prepare(
-        "UPDATE players SET shirt_number=?, updated_at=?, version=version+1 " +
+        "UPDATE players SET shirt_number=?, pass_number=?, birthdate=?, updated_at=?, version=version+1 " +
         "WHERE club_id=? AND team_id=? AND external_id IS NULL AND name=?",
-      ).bind(player.shirtNumber, now, clubId, teamId, player.name));
+      ).bind(player.shirtNumber, player.passNumber, player.birthdate, now, clubId, teamId, player.name));
     }
   }
   return statements;

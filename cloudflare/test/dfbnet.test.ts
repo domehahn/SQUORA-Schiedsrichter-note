@@ -5,7 +5,7 @@ import { CLUB_A, CLUB_B, TEAM_A, TEAM_A2, TEAM_B, USER_A, ORIGIN, jsonHeaders, m
 const roster = (extra: Record<string, unknown>[] = []) => ({
   filename: "synthetic-roster.csv",
   players: [
-    { name: "Testspieler A", firstName: "Max", shirtNumber: "7", externalId: "SYN-1", birthdate: "01.01.2014", pass: "0100-0001" },
+    { name: "Testspieler A", firstName: "Max", shirtNumber: "7", externalId: "SYN-1", birthdate: "01.01.2014", passNumber: "0100-0001", nationality: "XX" },
     { name: "Testspieler B", firstName: "Anna", shirtNumber: "9", externalId: "SYN-2" },
     ...extra,
   ],
@@ -28,22 +28,37 @@ describe("DFBnet staged import", () => {
 
     const confirm = await SELF.fetch(url(CLUB_A, TEAM_A, `/${importId}/confirm`), { method: "POST", headers: jsonHeaders(cookieA), body: JSON.stringify(roster()) });
     expect(confirm.status).toBe(200);
-    const players = await env.DB.prepare("SELECT name,shirt_number AS shirt FROM players WHERE club_id=? AND team_id=? ORDER BY name").bind(CLUB_A, TEAM_A).all<{ name: string; shirt: string }>();
+    const players = await env.DB.prepare("SELECT name,shirt_number AS shirt,pass_number AS pass,birthdate FROM players WHERE club_id=? AND team_id=? ORDER BY name").bind(CLUB_A, TEAM_A).all<{ name: string; shirt: string; pass: string | null; birthdate: string | null }>();
     expect(players.results.map((p) => p.name)).toEqual(["Testspieler A", "Testspieler B"]);
+    expect(players.results[0]).toMatchObject({ pass: "0100-0001", birthdate: "01.01.2014" });
+    expect(players.results[1]).toMatchObject({ pass: null, birthdate: null });
     const row = await env.DB.prepare("SELECT status FROM dfbnet_imports WHERE club_id=? AND id=?").bind(CLUB_A, importId).first<{ status: string }>();
     expect(row?.status).toBe("completed");
     expect((await env.DB.prepare("SELECT count(*) AS n FROM audit_log WHERE action='DFBNET_IMPORT_COMPLETED'").first<{ n: number }>())?.n).toBe(1);
   });
 
-  it("never persists forbidden DFBnet fields", async () => {
+  it("keeps pass number + birthdate on the roster row but strips club-external attributes", async () => {
     const { cookieA } = await seedTwoTenants();
     const done = await SELF.fetch(url(CLUB_A, TEAM_A), { method: "POST", headers: jsonHeaders(cookieA), body: JSON.stringify({ ...roster(), confirm: true }) });
     expect(done.status).toBe(201);
     const players = await env.DB.prepare("SELECT * FROM players WHERE club_id=?").bind(CLUB_A).all();
-    const dump = JSON.stringify(players.results) + JSON.stringify((await env.DB.prepare("SELECT * FROM dfbnet_imports WHERE club_id=?").bind(CLUB_A).all()).results);
-    expect(dump).not.toContain("0100-0001");
-    expect(dump).not.toContain("01.01.2014");
     expect(players.results).toHaveLength(2);
+    // pass number + birthdate are retained for the passport check
+    const dump = JSON.stringify(players.results);
+    expect(dump).toContain("0100-0001");
+    expect(dump).toContain("01.01.2014");
+    // club-external attributes never land anywhere
+    expect(dump).not.toContain("\"XX\"");
+    expect(dump).not.toContain("nationality");
+    const imports = JSON.stringify((await env.DB.prepare("SELECT * FROM dfbnet_imports WHERE club_id=?").bind(CLUB_A).all()).results);
+    expect(imports).not.toContain("0100-0001"); // identity data is not copied into the import metadata
+    expect(imports).not.toContain("01.01.2014");
+  });
+
+  it("rejects a malformed birthdate", async () => {
+    const { cookieA } = await seedTwoTenants();
+    const bad = { filename: "b.csv", confirm: true, players: [{ name: "Testspieler A", externalId: "SYN-1", birthdate: "not-a-date" }] };
+    expect((await SELF.fetch(url(CLUB_A, TEAM_A), { method: "POST", headers: jsonHeaders(cookieA), body: JSON.stringify(bad) })).status).toBe(422);
   });
 
   it("is idempotent on a repeated identical roster", async () => {

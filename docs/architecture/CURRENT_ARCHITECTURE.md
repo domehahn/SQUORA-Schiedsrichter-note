@@ -69,8 +69,12 @@ A `scheduled` handler runs daily (`triggers.crons`): retention cleanup
   one atomic batch, and writes `audit_log`.
 - Bodies with a small fixed shape are validated by `core/validation.ts`
   `parseBody(value, spec)` which rejects undeclared fields (422 `UNKNOWN_FIELD`).
-- `FORBIDDEN_DFBNET_FIELDS` strips birthdate/pass/nationality/eligibility from
-  every synced payload server-side.
+- DFBnet minimisation runs two server-enforced whitelists (`core/dfbnet.ts`):
+  the own-team relational roster (`players`) keeps `passNumber` + `birthdate`
+  for the referee passport / eligibility check; the `/state` sync blob keeps
+  `pass` but strips `birthdate`. `nationality`/`eligibility`/`registrationDate`
+  are stripped from every synced payload at every depth
+  (`docs/privacy/DFBNET_DATA_HANDLING.md`).
 
 ## Lifecycle & retention
 
@@ -121,7 +125,7 @@ structured line.
 
 ## Quality baseline
 
-- Unit: 33 · Worker (Miniflare + D1 `0001–0016`): 69 · e2e (Playwright): 19
+- Unit: 36 · Worker (Miniflare + D1 `0001–0017`): 71 · e2e (Playwright): 19
   (+1 skipped) · real-Worker e2e: 5 · build + lint + `npm audit --audit-level=high`:
   clean.
 - CI: `.github/workflows/ci.yml` (quality, e2e, e2e-worker, security, CodeQL).

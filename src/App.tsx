@@ -62,6 +62,7 @@ import {
 } from "./tournament";
 import { createSavedTeam, mergeTeams, type SavedTeam } from "./teams";
 import { parseDfbnetRoster } from "./dfbnet";
+import { readCsvFile } from "./integrations/dfbnet/decode";
 import { statsCsvRows } from "./stats";
 import { toCsv } from "./csv";
 
@@ -718,7 +719,7 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
 
   const readDfbnetRoster = async (file: File, existing: Player[]): Promise<{ roster: Player[]; teamName: string } | null> => {
     try {
-      const parsed = parseDfbnetRoster(await file.text(), file.name);
+      const parsed = parseDfbnetRoster(await readCsvFile(file), file.name);
       if (parsed.players.length === 0) {
         flash("Keine Spieler in der Datei erkannt");
         return null;
@@ -1042,7 +1043,23 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
           open={openPanel === "myroster"}
           onToggle={() => setOpenPanel((current) => (current === "myroster" ? null : "myroster"))}
         >
-          <TeamRosterPanel clubId={tenant.id} teamId={team.id} teamName={team.name} />
+          <TeamRosterPanel
+            clubId={tenant.id}
+            teamId={team.id}
+            teamName={team.name}
+            onCopyToLibrary={(entries) => {
+              const roster = entries.map((entry) => ({ id: uid(), number: entry.number, name: entry.name, pass: entry.pass, birthdate: "", status: "out" as const }));
+              const existing = teams.find((entry) => entry.name.toLowerCase() === team.name.toLowerCase());
+              if (existing) setTeams((list) => list.map((entry) => (entry.id === existing.id ? { ...entry, roster, updatedAt: nowIso() } : entry)));
+              else setTeams((list) => mergeTeams([createSavedTeam(team.name, "", roster)], list));
+            }}
+            onCopyToLineup={(side, entries) => {
+              const roster = entries.map((entry) => ({ id: uid(), number: entry.number, name: entry.name, pass: entry.pass, birthdate: "", status: "out" as const }));
+              patchMatch(side === "home"
+                ? { homeTeam: match.homeTeam || team.name, homeRoster: roster }
+                : { awayTeam: match.awayTeam || team.name, awayRoster: roster });
+            }}
+          />
         </CollapsibleSection>
 
         <section className="log-card" aria-labelledby="log-title">

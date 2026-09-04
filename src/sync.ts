@@ -119,6 +119,8 @@ export interface RosterPlayer {
   externalId: string | null;
   name: string;
   shirtNumber: string | null;
+  passNumber: string | null;
+  birthdate: string | null;
   version: number;
 }
 
@@ -147,11 +149,23 @@ export async function fetchPlayers(clubId: string, teamId: string): Promise<Rost
   } catch { return null; }
 }
 
-export async function createPlayer(clubId: string, teamId: string, input: { name: string; shirtNumber?: string }): Promise<RosterPlayer | null> {
+export interface PlayerInput {
+  name: string;
+  shirtNumber?: string;
+  passNumber?: string;
+  birthdate?: string;
+}
+
+export async function createPlayer(clubId: string, teamId: string, input: PlayerInput): Promise<RosterPlayer | null> {
   try {
     const response = await fetch(playersUrl(clubId, teamId), {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: input.name, ...(input.shirtNumber ? { shirtNumber: input.shirtNumber } : {}) }),
+      body: JSON.stringify({
+        name: input.name,
+        ...(input.shirtNumber ? { shirtNumber: input.shirtNumber } : {}),
+        ...(input.passNumber ? { passNumber: input.passNumber } : {}),
+        ...(input.birthdate ? { birthdate: input.birthdate } : {}),
+      }),
     });
     if (!response.ok) return null;
     const body = await response.json() as { player?: unknown };
@@ -159,11 +173,16 @@ export async function createPlayer(clubId: string, teamId: string, input: { name
   } catch { return null; }
 }
 
-export async function updatePlayer(clubId: string, teamId: string, id: string, input: { version: number; name: string; shirtNumber?: string }): Promise<RosterPlayer | "conflict" | null> {
+export async function updatePlayer(clubId: string, teamId: string, id: string, input: { version: number } & PlayerInput): Promise<RosterPlayer | "conflict" | null> {
   try {
     const response = await fetch(`${playersUrl(clubId, teamId)}/${enc(id)}`, {
       method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ version: input.version, name: input.name, ...(input.shirtNumber !== undefined ? { shirtNumber: input.shirtNumber } : {}) }),
+      body: JSON.stringify({
+        version: input.version, name: input.name,
+        ...(input.shirtNumber !== undefined ? { shirtNumber: input.shirtNumber } : {}),
+        ...(input.passNumber !== undefined ? { passNumber: input.passNumber } : {}),
+        ...(input.birthdate !== undefined ? { birthdate: input.birthdate } : {}),
+      }),
     });
     if (response.status === 409) return "conflict";
     if (!response.ok) return null;
@@ -196,7 +215,7 @@ export async function fetchDfbnetImports(clubId: string, teamId: string): Promis
 
 export async function pushDfbnetRoster(
   clubId: string, teamId: string,
-  input: { filename: string; players: { name: string; firstName?: string; shirtNumber?: string; externalId?: string }[]; mode: "merge" | "replace" },
+  input: { filename: string; players: { name: string; firstName?: string; shirtNumber?: string; externalId?: string; passNumber?: string; birthdate?: string }[]; mode: "merge" | "replace" },
 ): Promise<{ ok: boolean; recordCount: number }> {
   try {
     const response = await fetch(importsUrl(clubId, teamId), {

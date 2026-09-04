@@ -17,9 +17,16 @@ export interface ExternalRosterEntry {
   firstName: string;
   shirtNumber: string;
   externalId: string;
+  passNumber: string;
+  birthdate: string;
 }
 
-/** Parses a DFBnet CSV to the minimal fields the server relational import accepts (keeps externalId). */
+/**
+ * Parses a DFBnet CSV to the fields the server relational "Mein Kader" import
+ * accepts. Pass number and birthdate are included — the staged import stores
+ * them on the `players` row for the passport check. They never enter the
+ * `/state` sync blob (opponent / library rosters go through a different path).
+ */
 export function parseDfbnetExternal(csv: string, filename = "import.csv"): { teamName: string; warnings: string[]; players: ExternalRosterEntry[] } {
   if (new TextEncoder().encode(csv).byteLength > DFBNET_LIMITS.maxFileBytes) throw new DfbnetValidationError("FILE_TOO_LARGE");
   const external = mapRoster(parseCsv(csv), filename || "import.csv");
@@ -31,6 +38,8 @@ export function parseDfbnetExternal(csv: string, filename = "import.csv"): { tea
       firstName: player.firstName ?? "",
       shirtNumber: player.shirtNumber ?? "",
       externalId: player.externalId ?? "",
+      passNumber: player.pass ?? "",
+      birthdate: player.birthdate ?? "",
     })),
   };
 }
