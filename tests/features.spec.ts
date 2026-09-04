@@ -179,3 +179,22 @@ test("trennt Vereinsdaten: neuer Verein sieht das Archiv des anderen nicht", asy
   await expect(page.locator(".archive-table")).toHaveCount(0);
   await expect(page.getByText("Noch keine gespeicherten Spiele")).toBeVisible();
 });
+
+test("stellt einen Gegner-Spieler per Skizze auf eine Position", async ({ page }) => {
+  await openApp(page);
+  await page.getByRole("button", { name: "Mannschaftsaufstellungen" }).click();
+  const away = page.locator(".roster-editor > div").nth(1);
+  await away.locator("input[type='file']").setInputFiles({
+    name: "team.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from("Name Künstlername;Vorname Rufname\nMeier ;Anna (w)\nKern ;Ben (m)", "utf-8"),
+  });
+  await away.locator(".roster-group.group-out .roster-table tbody tr").first().locator(".status-seg.seg-start").click();
+
+  const pitch = away.locator(".pitch-view");
+  await expect(pitch.getByText("Ohne Position: Anna Meier")).toBeVisible();
+  await pitch.locator(".pitch-slot").first().click();
+  await pitch.locator(".pitch-assign select").selectOption({ label: "Anna Meier" });
+  await expect(pitch.locator(".pitch-slot.filled")).toContainText("Meier");
+  await expect(pitch.getByText(/Ohne Position/)).toHaveCount(0);
+});

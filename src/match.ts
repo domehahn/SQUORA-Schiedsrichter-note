@@ -47,6 +47,8 @@ export interface Player {
   pass?: string;
   birthdate?: string;
   status?: LineupStatus;
+  /** Formation slot key (see formations.ts), only meaningful while status is "start". */
+  position?: string;
 }
 
 export interface MatchMeta {
@@ -95,6 +97,8 @@ export interface MatchState {
   awayTeam: string;
   homeRoster: Player[];
   awayRoster: Player[];
+  homeFormation: string;
+  awayFormation: string;
   meta: MatchMeta;
   tournamentId: string | null;
   fixtureId: string | null;
@@ -169,6 +173,8 @@ export function createMatch(overrides: Partial<MatchState> = {}): MatchState {
     awayTeam: "Gast",
     homeRoster: [],
     awayRoster: [],
+    homeFormation: "",
+    awayFormation: "",
     meta: { ...emptyMeta },
     tournamentId: null,
     fixtureId: null,
@@ -208,6 +214,8 @@ export function normalizeMatch(raw: unknown): MatchState {
     matchDate: typeof source.matchDate === "string" && source.matchDate ? source.matchDate : todayIso(),
     homeRoster: sanitizeRoster(source.homeRoster),
     awayRoster: sanitizeRoster(source.awayRoster),
+    homeFormation: typeof source.homeFormation === "string" ? source.homeFormation.slice(0, 16) : "",
+    awayFormation: typeof source.awayFormation === "string" ? source.awayFormation.slice(0, 16) : "",
     meta: { ...emptyMeta, ...(source.meta && typeof source.meta === "object" ? source.meta : {}) },
     tournamentId: typeof source.tournamentId === "string" ? source.tournamentId : null,
     fixtureId: typeof source.fixtureId === "string" ? source.fixtureId : null,
@@ -244,6 +252,7 @@ export function sanitizeRoster(value: unknown): Player[] {
       pass: String(entry.pass ?? "").slice(0, 30),
       birthdate: String(entry.birthdate ?? "").slice(0, 12),
       status: entry.status === "start" || entry.status === "bench" || entry.status === "out" ? entry.status : undefined,
+      position: typeof entry.position === "string" && entry.position ? entry.position.slice(0, 16) : undefined,
     }))
     .filter((player) => player.number || player.name || player.pass);
 }

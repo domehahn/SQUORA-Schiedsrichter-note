@@ -6,6 +6,7 @@ import { useWakeLock } from "./useWakeLock";
 import { cue, unlockAudio } from "./notify";
 import { TenantGate } from "./TenantGate";
 import { RosterEditor } from "./RosterEditor";
+import { PitchView } from "./PitchView";
 import { CollapsibleSection, MetaPanel, SessionExpiredModal, StatsPanel, TeamActions, TeamLibraryPanel, TournamentPanel, TournamentReport } from "./panels";
 import { TeamRosterPanel } from "./TeamRosterPanel";
 import { downloadBlob, downloadJson } from "./download";
@@ -707,6 +708,18 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
     }
   };
 
+  /** Assign a starter to a pitch slot; vacates any slot the player previously held and bumps out whoever was there (swap-safe). */
+  const assignPosition = (side: TeamSide, playerId: string, slotKey: string | null) => {
+    const key = side === "home" ? "homeRoster" : "awayRoster";
+    const roster = side === "home" ? match.homeRoster : match.awayRoster;
+    const next = roster.map((player) => {
+      if (player.id === playerId) return { ...player, position: slotKey ?? undefined };
+      if (slotKey && player.position === slotKey) return { ...player, position: undefined };
+      return player;
+    });
+    patchMatch({ [key]: next } as Partial<MatchState>);
+  };
+
   const saveLineupToHistory = () => {
     if (match.homeRoster.length === 0) { flash("Noch keine Heim-Aufstellung vorhanden"); return; }
     const label = `Aufstellung ${match.homeTeam || "Heim"}`;
@@ -1017,10 +1030,24 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
             <div>
               <RosterEditor teamLabel={match.homeTeam || "Heim"} roster={match.homeRoster} grouped arrangeOnly onChange={(next) => patchMatch({ homeRoster: next })} />
               <p className="collapsible-hint">Spieler kommen aus „Mein Kader" (→ Heim-Aufstellung). Hier nur Aufgestellt / Bank / Nicht nominiert.</p>
+              <PitchView
+                teamLabel={match.homeTeam || "Heim"}
+                roster={match.homeRoster}
+                formationId={match.homeFormation}
+                onFormationChange={(id) => patchMatch({ homeFormation: id })}
+                onAssign={(playerId, slot) => assignPosition("home", playerId, slot)}
+              />
               <button className="text-button" onClick={saveLineupToHistory}><Icon name="trophy" /> Aufstellung speichern</button>
             </div>
             <div>
               <RosterEditor teamLabel={match.awayTeam || "Gast"} roster={match.awayRoster} grouped onChange={(next) => patchMatch({ awayRoster: next })} onImportCsv={importRosterCsv("away")} />
+              <PitchView
+                teamLabel={match.awayTeam || "Gast"}
+                roster={match.awayRoster}
+                formationId={match.awayFormation}
+                onFormationChange={(id) => patchMatch({ awayFormation: id })}
+                onAssign={(playerId, slot) => assignPosition("away", playerId, slot)}
+              />
               <button className="text-button" onClick={() => saveTeamToLibrary("away")}><Icon name="trophy" /> Gast in Bibliothek speichern</button>
             </div>
           </div>

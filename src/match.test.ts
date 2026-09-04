@@ -158,10 +158,21 @@ describe("normalizeMatch", () => {
     expect(next.meta.venue).toBe("");
     expect(next.tournamentId).toBeNull();
     expect(next.events).toHaveLength(1);
+    expect(next.homeFormation).toBe("");
+    expect(next.awayFormation).toBe("");
   });
 
   it("liefert einen frischen Zustand für Müll-Eingaben", () => {
     expect(normalizeMatch(null).phase).toBe("setup");
     expect(normalizeMatch("nope").events).toEqual([]);
+  });
+
+  it("übernimmt eine gespeicherte Formation und Spielerposition", () => {
+    const next = normalizeMatch({
+      homeFormation: "4-3-3",
+      homeRoster: [{ id: "p1", number: "9", name: "Max Testspieler", status: "start", position: "L2-1" }],
+    });
+    expect(next.homeFormation).toBe("4-3-3");
+    expect(next.homeRoster[0].position).toBe("L2-1");
   });
 });
