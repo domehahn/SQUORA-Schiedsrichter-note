@@ -124,7 +124,6 @@ structured line.
 Tracked in `docs/EPIC_STATUS.md` / `docs/PRODUCTION_READINESS.md`: the DFBnet
 **UI** still keeps opponent rosters in the match blob rather than
 `teams`/`players` (needs the relational roster model); no incremental relational
-match/event API yet (the `/state` snapshot is the sync surface); season-based
-match cleanup and the weekly logical `d1 export` are policy-only;
-`ALERT_WEBHOOK_URL` must be set in production for alerts to deliver; no
-`repositories/` layer.
+match/event API yet (the `/state` snapshot is the sync surface); the weekly
+logical `d1 export` is policy-only; `ALERT_WEBHOOK_URL` must be set in production
+for alerts to deliver; no `repositories/` layer.

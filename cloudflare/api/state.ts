@@ -25,6 +25,14 @@ function matchStatus(phase: unknown): "setup" | "live" | "finished" | "abandoned
   return "live";
 }
 
+const RETAINED_SEASONS = 3; // current + 2 prior; a season runs 1 Aug – 31 Jul
+
+/** ISO date (YYYY-MM-DD) before which archived matches are shed from the server DB. */
+function seasonCutoff(now: Date): string {
+  const seasonStartYear = now.getUTCMonth() >= 7 ? now.getUTCFullYear() : now.getUTCFullYear() - 1;
+  return `${seasonStartYear - (RETAINED_SEASONS - 1)}-08-01`;
+}
+
 /** Whole-team synchronisation snapshot (archive, tournaments, roster library, live match). */
 export async function getState(env: Env, auth: AuthContext, clubId: string, teamId: string, requestId: string): Promise<Response> {
   const context = await requireTeamAccess(env.DB, auth, clubId, teamId, "matches.read");
@@ -67,7 +75,9 @@ export async function putState(request: Request, env: Env, auth: AuthContext, cl
   const rosterLibrary = arrayValue(source, "teams", 500);
   const tournaments = arrayValue(source, "tournaments", 500);
   const current = source.current === null || source.current === undefined ? null : objectValue(source.current);
-  const now = new Date().toISOString();
+  const startedAt = new Date();
+  const now = startedAt.toISOString();
+  const cutoff = seasonCutoff(startedAt);
 
   await env.DB.prepare("INSERT OR IGNORE INTO team_sync_versions (club_id,team_id,version,updated_at) VALUES (?,?,0,?)").bind(club, team, now).run();
 
@@ -89,6 +99,7 @@ export async function putState(request: Request, env: Env, auth: AuthContext, cl
   const tournamentIds: string[] = [];
   let changedMatches = 0;
   let changedTournaments = 0;
+  let shedOldMatches = 0;
 
   const statements: D1PreparedStatement[] = [
     env.DB.prepare("UPDATE team_sync_versions SET version=version+1,updated_at=? WHERE club_id=? AND team_id=? AND version=?").bind(now, club, team, expectedVersion),
@@ -115,6 +126,11 @@ export async function putState(request: Request, env: Env, auth: AuthContext, cl
     const saved = objectValue(minimize(raw));
     const state = objectValue(saved.state);
     const id = domainId(state);
+    const matchDate = typeof state.matchDate === "string" ? state.matchDate.slice(0, 40) : now.slice(0, 10);
+    // Season retention: matches older than "current + 2 prior" seasons are shed
+    // from the server DB (they stay in the client's own local archive). Leaving
+    // the id out of matchIds lets the NOT IN sweep below drop it.
+    if (matchDate < cutoff) { shedOldMatches += 1; continue; }
     matchIds.push(id);
     const rawEvents = Array.isArray(state.events) ? state.events.slice(0, 1000) : [];
     const withoutEvents = { ...state, events: undefined };
@@ -127,7 +143,7 @@ export async function putState(request: Request, env: Env, auth: AuthContext, cl
     statements.push(env.DB.prepare(`INSERT INTO matches (club_id,team_id,id,match_date,competition,venue,state,payload_json,saved_at,version,created_at,updated_at)
       VALUES (?,?,?,?,?,?,?,?,?,1,?,?)
       ON CONFLICT(club_id,id) DO UPDATE SET team_id=excluded.team_id,match_date=excluded.match_date,competition=excluded.competition,venue=excluded.venue,state=excluded.state,payload_json=excluded.payload_json,saved_at=excluded.saved_at,version=matches.version+1,updated_at=excluded.updated_at,deleted_at=NULL`)
-      .bind(club, team, id, typeof state.matchDate === "string" ? state.matchDate.slice(0, 40) : now.slice(0, 10), typeof meta.competition === "string" ? meta.competition.slice(0, 160) : "", typeof meta.venue === "string" ? meta.venue.slice(0, 200) : "", matchStatus(state.phase), payloadJson, savedAt, now, now));
+      .bind(club, team, id, matchDate, typeof meta.competition === "string" ? meta.competition.slice(0, 160) : "", typeof meta.venue === "string" ? meta.venue.slice(0, 200) : "", matchStatus(state.phase), payloadJson, savedAt, now, now));
     statements.push(env.DB.prepare("DELETE FROM match_events WHERE club_id=? AND match_id=?").bind(club, id));
     for (const rawEvent of rawEvents) {
       const event = objectValue(minimize(rawEvent));
@@ -161,7 +177,7 @@ export async function putState(request: Request, env: Env, auth: AuthContext, cl
   }
   await writeAudit(env.DB, {
     clubId: club, userId: auth.userId, action: "TEAM_STATE_SYNCED", entityType: "team", entityId: team,
-    metadata: { version: expectedVersion + 1, archive: archive.length, tournaments: tournaments.length, changedMatches, changedTournaments, draft: current ? 1 : 0 },
+    metadata: { version: expectedVersion + 1, archive: archive.length, tournaments: tournaments.length, changedMatches, changedTournaments, shedOldMatches, draft: current ? 1 : 0 },
   });
   return json({ ok: true, version: expectedVersion + 1, updatedAt: now }, requestId);
 }

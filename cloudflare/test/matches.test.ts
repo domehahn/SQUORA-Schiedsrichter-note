@@ -113,6 +113,25 @@ describe("match isolation and optimistic locking", () => {
     expect(JSON.parse(audit.results[1].m).changedMatches).toBe(2); // B + C, not A
   });
 
+  it("sheds archived matches older than the retained season window from the server", async () => {
+    const { cookieA } = await seedTwoTenants();
+    const url = `${ORIGIN}/api/v1/clubs/${CLUB_A}/teams/${TEAM_A}/state`;
+    const recent = new Date().toISOString().slice(0, 10);
+    const savedMatch = (id: string, matchDate: string) => ({ savedAt: `${matchDate}T10:00:00Z`, state: { id, phase: "finished", matchDate, meta: {}, events: [] } });
+    const NEW = "aaaaaaaa-8888-4888-8888-aaaaaaaaaaaa";
+    const OLD = "bbbbbbbb-8888-4888-8888-bbbbbbbbbbbb";
+
+    const put = await SELF.fetch(url, { method: "PUT", headers: jsonHeaders(cookieA), body: JSON.stringify({
+      version: 0, archive: [savedMatch(NEW, recent), savedMatch(OLD, "2019-05-01")], deletedIds: [], tournaments: [], teams: [], current: null,
+    }) });
+    expect(put.status).toBe(200);
+
+    const rows = await env.DB.prepare("SELECT id FROM matches WHERE club_id=? AND team_id=?").bind(CLUB_A, TEAM_A).all<{ id: string }>();
+    expect(rows.results.map((r) => r.id)).toEqual([NEW]); // the 2019 match is not persisted
+    const audit = await env.DB.prepare("SELECT metadata_json AS m FROM audit_log WHERE action='TEAM_STATE_SYNCED' ORDER BY created_at DESC").first<{ m: string }>();
+    expect(JSON.parse(audit!.m).shedOldMatches).toBe(1);
+  });
+
   it("removes non-whitelisted sensitive roster metadata before persistence", async () => {
     const { cookieA } = await seedTwoTenants();
     const url = `${ORIGIN}/api/v1/clubs/${CLUB_A}/teams/${TEAM_A}/state`;
