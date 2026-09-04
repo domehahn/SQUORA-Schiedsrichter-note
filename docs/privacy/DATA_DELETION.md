@@ -16,22 +16,28 @@ Delete the `memberships` row (or set a non-active status). Access ends on the
 member's next request — membership is re-checked per request, no session flush
 needed. Audit: `MEMBER_REMOVED` (to be emitted, Epic 18).
 
-## Delete a club (implemented — immediate hard delete)
+## Delete a club (implemented — 30-day grace window)
 
 `DELETE /api/v1/clubs/:clubId` (`cloudflare/api/clubs.ts`):
 
 1. Requires role `club_owner` and `requireSameOrigin`; the body must confirm the
    exact club name (else 422 `CONFIRMATION_MISMATCH`).
-2. A `CLUB_DELETED` audit row is written first, keeping `clubId` + `name` in
-   `metadata_json` (its own `club_id` column is nulled by the cascade —
-   `audit_log.club_id` FK is `ON DELETE SET NULL`).
-3. `purgeClub()` (`cloudflare/services/club-deletion.ts`) deletes leaf-first
-   across `match_events, matches, tournaments, players, team_drafts,
-   team_rosters, team_sync_versions, teams, dfbnet_imports, memberships`, then
-   the `clubs` row, in one `batch`. Returns per-table row counts.
+2. The club moves to `status='deleted'` with `deletion_due_at = now + 30 days`.
+   It disappears from every tenant query immediately (all use `status='active'`),
+   but its rows are untouched during the window. Audit `CLUB_DELETION_SCHEDULED`.
+3. `POST /api/v1/clubs/:clubId/deletion/cancel` (owner) restores `status='active'`
+   and clears `deletion_due_at` any time before the due date. Audit
+   `CLUB_DELETION_CANCELLED`.
+4. Once the window elapses, the daily cron (`runClubPurge` in
+   `services/retention.ts`) writes a `CLUB_DELETED` audit row (keeping
+   `clubId` + `name` in `metadata_json`, reason `grace_window_elapsed`) and runs
+   `purgeClub()` — leaf-first deletes across `match_events, matches, tournaments,
+   players, team_drafts, team_rosters, team_sync_versions, teams, dfbnet_imports,
+   memberships`, then the `clubs` row. `audit_log.club_id` is nulled by the FK
+   (`ON DELETE SET NULL`).
 
-A 30-day `status='deleting'` grace window is future work (needs a purge job).
-Tests: `cloudflare/test/lifecycle.test.ts`.
+Tests: `cloudflare/test/lifecycle.test.ts` (schedule → cancel → re-schedule →
+cron purge).
 
 ## Delete a user account (implemented — tombstone)
 

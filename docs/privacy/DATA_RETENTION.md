@@ -23,8 +23,8 @@ minors (see `DFBNET_DATA_HANDLING.md`).
 ## Implementation status
 
 A daily cron (`triggers.crons` → `worker.ts` `scheduled` → `services/retention.ts`)
-now purges expired/revoked `sessions`, trims `audit_log` beyond 24 months and
-`dfbnet_imports` beyond 12 months. Still policy-only: season-based match/tournament
-cleanup, the 30-day club-deletion grace window, and the weekly encrypted logical
-export — tracked in `docs/PRODUCTION_READINESS.md`. Request-based deletion is in
-`DATA_DELETION.md`.
+purges expired/revoked `sessions`, trims `audit_log` beyond 24 months and
+`dfbnet_imports` beyond 12 months, and hard-deletes clubs whose 30-day deletion
+grace window has elapsed (`runClubPurge`). Still policy-only: season-based
+match/tournament cleanup and the weekly encrypted logical export — tracked in
+`docs/PRODUCTION_READINESS.md`. Request-based deletion is in `DATA_DELETION.md`.

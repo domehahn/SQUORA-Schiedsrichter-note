@@ -1,4 +1,4 @@
-import { listClubs, createClub, getClub, deleteClub } from "./api/clubs";
+import { listClubs, createClub, getClub, deleteClub, cancelClubDeletion } from "./api/clubs";
 import { deleteAccount } from "./api/account";
 import { exportClub } from "./api/export";
 import { login, logout, me } from "./api/auth";
@@ -88,6 +88,11 @@ async function routeAuthenticated(request: Request, env: Env, auth: AuthContext,
   const clubExport = path.match(/^\/api\/v1\/clubs\/([^/]+)\/export$/u);
   if (clubExport) {
     if (request.method === "GET") return exportClub(request, env, auth, decodeURIComponent(clubExport[1]), requestId);
+    return methodNotAllowed();
+  }
+  const clubCancelDeletion = path.match(/^\/api\/v1\/clubs\/([^/]+)\/deletion\/cancel$/u);
+  if (clubCancelDeletion) {
+    if (request.method === "POST") return cancelClubDeletion(request, env, auth, decodeURIComponent(clubCancelDeletion[1]), requestId);
     return methodNotAllowed();
   }
   const members = path.match(/^\/api\/v1\/clubs\/([^/]+)\/members$/u);

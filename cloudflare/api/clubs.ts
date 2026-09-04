@@ -4,7 +4,6 @@ import { HttpError, json, readJson, requireSameOrigin } from "../core/http";
 import { newId } from "../core/id";
 import { parseBody } from "../core/validation";
 import { denyTeamScoped, requireTenantAccess } from "../middleware/tenant";
-import { purgeClub } from "../services/club-deletion";
 import { writeAudit } from "../services/audit-service";
 
 function randomSalt(): string {
@@ -52,11 +51,14 @@ export async function getClub(env: Env, auth: AuthContext, clubId: string, reque
   return json({ club: { ...club, role: context.role, permissions: context.permissions } }, requestId);
 }
 
+const GRACE_DAYS = 30;
+
 /**
- * Hard-deletes a club and every row scoped to it. Only a `club_owner` may do
- * this and the request body must confirm the exact club name. The audit row is
- * written before the purge and keeps the club id/name in metadata (its own
- * `club_id` column is nulled by the cascade).
+ * Schedules a club for deletion after a 30-day grace window. Only a `club_owner`
+ * may do this and the body must confirm the exact club name. The club moves to
+ * `status='deleted'` with `deletion_due_at` set — it disappears from every
+ * tenant query immediately, the owner can still cancel, and the daily cron
+ * hard-deletes it (purgeClub) once the window elapses.
  */
 export async function deleteClub(request: Request, env: Env, auth: AuthContext, clubId: string, requestId: string): Promise<Response> {
   requireSameOrigin(request);
@@ -67,7 +69,24 @@ export async function deleteClub(request: Request, env: Env, auth: AuthContext, 
   if (!club) throw new HttpError(404, "NOT_FOUND", "The requested resource was not found.");
   const confirm = parseBody(await readJson(request, 4096), { confirm: { kind: "string", max: 120 } }).confirm as string;
   if (confirm !== club.name) throw new HttpError(422, "CONFIRMATION_MISMATCH", "The confirmation does not match the club name.");
-  await writeAudit(env.DB, { clubId: context.clubId, userId: auth.userId, action: "CLUB_DELETED", entityType: "club", entityId: context.clubId, metadata: { clubId: context.clubId, name: club.name } });
-  const counts = await purgeClub(env.DB, context.clubId);
-  return json({ ok: true, deleted: counts }, requestId);
+  const now = new Date();
+  const dueAt = new Date(now.getTime() + GRACE_DAYS * 86_400_000).toISOString();
+  await env.DB.prepare("UPDATE clubs SET status='deleted',deletion_due_at=?,updated_at=? WHERE id=? AND status='active'")
+    .bind(dueAt, now.toISOString(), context.clubId).run();
+  await writeAudit(env.DB, { clubId: context.clubId, userId: auth.userId, action: "CLUB_DELETION_SCHEDULED", entityType: "club", entityId: context.clubId, metadata: { clubId: context.clubId, name: club.name, dueAt } });
+  return json({ ok: true, deletionDueAt: dueAt }, requestId);
+}
+
+/** Cancels a scheduled club deletion. Owner only; the club is not `active` right now. */
+export async function cancelClubDeletion(request: Request, env: Env, auth: AuthContext, clubId: string, requestId: string): Promise<Response> {
+  requireSameOrigin(request);
+  const membership = await env.DB.prepare("SELECT role FROM memberships WHERE club_id=? AND user_id=? AND status='active'")
+    .bind(clubId, auth.userId).first<{ role: Role }>();
+  if (!membership) throw new HttpError(404, "NOT_FOUND", "The requested resource was not found.");
+  if (membership.role !== "club_owner") throw new HttpError(403, "PERMISSION_DENIED", "Only the club owner can cancel deletion.");
+  const restored = await env.DB.prepare("UPDATE clubs SET status='active',deletion_due_at=NULL,updated_at=? WHERE id=? AND status='deleted' AND deletion_due_at IS NOT NULL")
+    .bind(new Date().toISOString(), clubId).run();
+  if (restored.meta.changes !== 1) throw new HttpError(404, "NOT_FOUND", "The requested resource was not found.");
+  await writeAudit(env.DB, { clubId, userId: auth.userId, action: "CLUB_DELETION_CANCELLED", entityType: "club", entityId: clubId });
+  return json({ ok: true }, requestId);
 }

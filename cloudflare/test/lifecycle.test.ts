@@ -1,5 +1,6 @@
 import { env, SELF } from "cloudflare:test";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { runClubPurge } from "../services/retention";
 import {
   CLUB_A, CLUB_B, TEAM_A, USER_A, USER_B, ORIGIN,
   jsonHeaders, migrate, resetDb, seedMembership, seedTwoTenants,
@@ -51,19 +52,37 @@ describe("club export & lifecycle deletion", () => {
     expect((await SELF.fetch(`${ORIGIN}/api/v1/clubs/${CLUB_A}/export`, { headers: { Cookie: cookieA } })).status).toBe(403);
   });
 
-  it("hard-deletes a club with cascade, leaving other clubs untouched", async () => {
+  it("schedules deletion with a grace window; cancel restores; the cron purges once due", async () => {
     const { cookieA } = await seedTwoTenants();
     await seedClubContent(CLUB_A, TEAM_A);
+
+    // schedule
     const del = await SELF.fetch(`${ORIGIN}/api/v1/clubs/${CLUB_A}`, { method: "DELETE", headers: jsonHeaders(cookieA), body: JSON.stringify({ confirm: "Club A Test" }) });
     expect(del.status).toBe(200);
+    expect((await del.json<{ deletionDueAt: string }>()).deletionDueAt).toMatch(/^20\d\d-/u);
+    const scheduled = await env.DB.prepare("SELECT status,deletion_due_at AS due FROM clubs WHERE id=?").bind(CLUB_A).first<{ status: string; due: string }>();
+    expect(scheduled).toMatchObject({ status: "deleted" });
+    expect(scheduled?.due).toBeTruthy();
+    // invisible to tenant queries, data still present during the window
+    expect((await SELF.fetch(`${ORIGIN}/api/v1/clubs/${CLUB_A}`, { headers: { Cookie: cookieA } })).status).toBe(404);
+    expect((await env.DB.prepare("SELECT count(*) AS n FROM matches WHERE club_id=?").bind(CLUB_A).first<{ n: number }>())?.n).toBe(1);
+
+    // cancel restores it
+    expect((await SELF.fetch(`${ORIGIN}/api/v1/clubs/${CLUB_A}/deletion/cancel`, { method: "POST", headers: jsonHeaders(cookieA) })).status).toBe(200);
+    expect((await SELF.fetch(`${ORIGIN}/api/v1/clubs/${CLUB_A}`, { headers: { Cookie: cookieA } })).status).toBe(200);
+
+    // re-schedule, then force the window to the past and run the cron
+    await SELF.fetch(`${ORIGIN}/api/v1/clubs/${CLUB_A}`, { method: "DELETE", headers: jsonHeaders(cookieA), body: JSON.stringify({ confirm: "Club A Test" }) });
+    await env.DB.prepare("UPDATE clubs SET deletion_due_at='2020-01-01T00:00:00.000Z' WHERE id=?").bind(CLUB_A).run();
+    const purged = await runClubPurge(env.DB);
+    expect(purged).toEqual([CLUB_A]);
     for (const table of ["matches", "match_events", "tournaments", "players", "teams", "memberships"]) {
-      const row = await env.DB.prepare(`SELECT count(*) AS n FROM ${table} WHERE club_id=?`).bind(CLUB_A).first<{ n: number }>();
-      expect(row?.n, table).toBe(0);
+      expect((await env.DB.prepare(`SELECT count(*) AS n FROM ${table} WHERE club_id=?`).bind(CLUB_A).first<{ n: number }>())?.n, table).toBe(0);
     }
     expect((await env.DB.prepare("SELECT count(*) AS n FROM clubs WHERE id=?").bind(CLUB_A).first<{ n: number }>())?.n).toBe(0);
     expect((await env.DB.prepare("SELECT count(*) AS n FROM clubs WHERE id=?").bind(CLUB_B).first<{ n: number }>())?.n).toBe(1);
     const audit = await env.DB.prepare("SELECT metadata_json AS m FROM audit_log WHERE action='CLUB_DELETED'").first<{ m: string }>();
-    expect(JSON.parse(audit!.m)).toMatchObject({ name: "Club A Test" });
+    expect(JSON.parse(audit!.m)).toMatchObject({ name: "Club A Test", reason: "grace_window_elapsed" });
   });
 
   it("rejects club deletion by a non-owner and on a bad confirmation", async () => {

@@ -1,7 +1,25 @@
+import { purgeClub } from "./club-deletion";
+
 export interface RetentionResult {
   sessions: number;
   audit: number;
   imports: number;
+  purgedClubs: number;
+}
+
+/** Hard-deletes clubs whose 30-day deletion grace window has elapsed. */
+export async function runClubPurge(db: D1Database, now: Date = new Date()): Promise<string[]> {
+  const due = await db
+    .prepare("SELECT id,name FROM clubs WHERE status='deleted' AND deletion_due_at IS NOT NULL AND deletion_due_at <= ?")
+    .bind(now.toISOString())
+    .all<{ id: string; name: string }>();
+  for (const club of due.results) {
+    await db.prepare("INSERT INTO audit_log (id,club_id,user_id,action,entity_type,entity_id,metadata_json,created_at) VALUES (?,?,NULL,'CLUB_DELETED','club',?,?,?)")
+      .bind(crypto.randomUUID(), club.id, club.id, JSON.stringify({ clubId: club.id, name: club.name, reason: "grace_window_elapsed" }), now.toISOString())
+      .run();
+    await purgeClub(db, club.id);
+  }
+  return due.results.map((club) => club.id);
 }
 
 const DAY_MS = 86_400_000;
@@ -28,10 +46,12 @@ export async function runRetention(db: D1Database, now: Date = new Date()): Prom
     .prepare("DELETE FROM dfbnet_imports WHERE created_at < ?")
     .bind(daysAgo(IMPORT_RETENTION_DAYS))
     .run();
+  const purgedClubs = await runClubPurge(db, now);
 
   return {
     sessions: sessions.meta.changes ?? 0,
     audit: audit.meta.changes ?? 0,
     imports: imports.meta.changes ?? 0,
+    purgedClubs: purgedClubs.length,
   };
 }
