@@ -6,7 +6,7 @@ import { objectValue, stringValue } from "../core/validation";
 import { denyTeamScoped, requireTenantAccess } from "../middleware/tenant";
 import { writeAudit } from "../services/audit-service";
 
-const DUMMY_HASH = "pbkdf2-sha256$600000$00000000000000000000000000000000$0000000000000000000000000000000000000000000000000000000000000000";
+const DUMMY_HASH = "pbkdf2-sha256$100000*6$00000000000000000000000000000000$0000000000000000000000000000000000000000000000000000000000000000";
 type MembershipStatus = "invited" | "active" | "suspended" | "removed";
 
 function membershipStatus(value: unknown): value is MembershipStatus {

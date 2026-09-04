@@ -3,7 +3,7 @@ import { verifyPassword } from "../auth/password";
 import { HttpError, json, readJson, requireSameOrigin } from "../core/http";
 import { writeAudit } from "../services/audit-service";
 
-const DUMMY_HASH = "pbkdf2-sha256$600000$00000000000000000000000000000000$0000000000000000000000000000000000000000000000000000000000000000";
+const DUMMY_HASH = "pbkdf2-sha256$100000*6$00000000000000000000000000000000$0000000000000000000000000000000000000000000000000000000000000000";
 
 function setCookie(response: Response, cookie: string): Response {
   const headers = new Headers(response.headers);

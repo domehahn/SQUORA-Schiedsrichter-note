@@ -1,7 +1,20 @@
 import { pbkdf2, randomBytes } from "node:crypto";
 
-const ITERATIONS = 600_000;
+// Must match cloudflare/auth/password.ts: the Workers runtime caps a single
+// PBKDF2 call at 100 000 iterations, so the work factor comes from chaining.
+const ROUND_ITERATIONS = 100_000;
+const ROUNDS = 6;
 const MIN_PASSWORD_LENGTH = 12;
+
+const pbkdf2Async = (material, salt) => new Promise((resolve, reject) => {
+  pbkdf2(material, salt, ROUND_ITERATIONS, 32, "sha256", (error, derived) => (error ? reject(error) : resolve(derived)));
+});
+
+async function deriveChained(password, salt) {
+  let material = Buffer.from(password, "utf8");
+  for (let round = 0; round < ROUNDS; round += 1) material = await pbkdf2Async(material, salt);
+  return material;
+}
 
 function readHiddenPassword() {
   if (!process.stdin.isTTY) {
@@ -56,7 +69,5 @@ if (password.length < MIN_PASSWORD_LENGTH || password.length > 200) {
   throw new Error(`Passwort muss zwischen ${MIN_PASSWORD_LENGTH} und 200 Zeichen lang sein`);
 }
 const salt = randomBytes(16);
-const hash = await new Promise((resolve, reject) => {
-  pbkdf2(password, salt, ITERATIONS, 32, "sha256", (error, derived) => error ? reject(error) : resolve(derived));
-});
-process.stdout.write(`pbkdf2-sha256$${ITERATIONS}$${salt.toString("hex")}$${hash.toString("hex")}`);
+const hash = await deriveChained(password, salt);
+process.stdout.write(`pbkdf2-sha256$${ROUND_ITERATIONS}*${ROUNDS}$${salt.toString("hex")}$${hash.toString("hex")}`);

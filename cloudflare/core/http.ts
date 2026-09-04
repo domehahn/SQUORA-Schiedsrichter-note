@@ -46,7 +46,12 @@ export function errorResponse(error: unknown, requestId: string): Response {
   if (error instanceof HttpError) {
     return json({ error: { code: error.code, message: error.message }, requestId }, requestId, error.status);
   }
-  console.error(JSON.stringify({ requestId, level: "error", code: "UNHANDLED_ERROR" }));
+  // Server-side only — the client response never carries internal detail.
+  console.error(JSON.stringify({
+    requestId, level: "error", code: "UNHANDLED_ERROR",
+    message: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack : undefined,
+  }));
   return json({ error: { code: "INTERNAL_ERROR", message: "The request could not be processed." }, requestId }, requestId, 500);
 }
 
