@@ -7,6 +7,7 @@ import { cue, unlockAudio } from "./notify";
 import { TenantGate } from "./TenantGate";
 import { RosterEditor } from "./RosterEditor";
 import { CollapsibleSection, MetaPanel, SessionExpiredModal, StatsPanel, TeamActions, TeamLibraryPanel, TournamentPanel, TournamentReport } from "./panels";
+import { TeamRosterPanel } from "./TeamRosterPanel";
 import { downloadBlob, downloadJson } from "./download";
 import { ACTIVE_TENANT_KEY, SOUND_KEY } from "./localData";
 import { readEncryptedCache, writeEncryptedCache } from "./encryptedCache";
@@ -135,7 +136,7 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [printTarget, setPrintTarget] = useState<MatchState | null>(null);
   const [printTournament, setPrintTournament] = useState<Tournament | null>(null);
-  const [openPanel, setOpenPanel] = useState<"cards" | "meta" | "roster" | "teams" | "tournaments" | "stats" | null>(null);
+  const [openPanel, setOpenPanel] = useState<"cards" | "meta" | "roster" | "myroster" | "teams" | "tournaments" | "stats" | null>(null);
   const [showLog, setShowLog] = useState(true);
   const [statsRange, setStatsRange] = useState(() => seasonBounds());
 
@@ -1031,6 +1032,17 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
               if (result) setTeams((list) => list.map((entry) => (entry.id === teamId ? { ...entry, roster: result.roster, name: entry.name || result.teamName, updatedAt: nowIso() } : entry)));
             }}
           />
+        </CollapsibleSection>
+
+        <CollapsibleSection
+          id="myroster"
+          icon="user"
+          title={`Mein Kader · ${team.name}`}
+          hint="Server-Kader dieser Mannschaft. DFBnet-Importe laufen über den geprüften Import-Workflow."
+          open={openPanel === "myroster"}
+          onToggle={() => setOpenPanel((current) => (current === "myroster" ? null : "myroster"))}
+        >
+          <TeamRosterPanel clubId={tenant.id} teamId={team.id} teamName={team.name} />
         </CollapsibleSection>
 
         <section className="log-card" aria-labelledby="log-title">
