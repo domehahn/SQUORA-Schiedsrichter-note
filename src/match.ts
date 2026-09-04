@@ -91,6 +91,8 @@ export interface MatchState {
   version: 2;
   id: string;
   matchDate: string;
+  /** Optional free-text name, e.g. to tell apart several Funino mini-matches played on the same day. */
+  matchName: string;
   ageGroup: string;
   halfDurationMinutes: number;
   homeTeam: string;
@@ -131,8 +133,8 @@ export const ageGroups = [
   { value: "C", label: "C-Jugend · U15/U14", minutes: 35 },
   { value: "D", label: "D-Jugend · U13/U12", minutes: 30 },
   { value: "E", label: "E-Jugend · U11/U10", minutes: 25 },
-  { value: "F", label: "F-Jugend · U9/U8", minutes: 20 },
-  { value: "G", label: "G-Jugend · U7", minutes: 20 },
+  { value: "F", label: "F-Jugend · U9/U8", minutes: 7 },
+  { value: "G", label: "G-Jugend (Bambini) · U7", minutes: 6 },
   { value: "H", label: "Herren / Damen", minutes: 45 },
   { value: "custom", label: "Eigene Spielzeit", minutes: 30 },
 ] as const;
@@ -167,6 +169,7 @@ export function createMatch(overrides: Partial<MatchState> = {}): MatchState {
     version: 2,
     id: uid(),
     matchDate: todayIso(),
+    matchName: "",
     ageGroup: "D",
     halfDurationMinutes: 30,
     homeTeam: "Heim",
@@ -212,6 +215,7 @@ export function normalizeMatch(raw: unknown): MatchState {
     version: 2,
     id: typeof source.id === "string" && source.id ? source.id : base.id,
     matchDate: typeof source.matchDate === "string" && source.matchDate ? source.matchDate : todayIso(),
+    matchName: typeof source.matchName === "string" ? source.matchName.slice(0, 60) : "",
     homeRoster: sanitizeRoster(source.homeRoster),
     awayRoster: sanitizeRoster(source.awayRoster),
     homeFormation: typeof source.homeFormation === "string" ? source.homeFormation.slice(0, 16) : "",
@@ -567,13 +571,18 @@ export interface AgeRule {
 }
 
 /** Orientation values (DFB youth football). Regional match rules take precedence. */
+/**
+ * Fußballverband Rheinland (FVR), Durchführungsbestimmungen Jugend Teil I,
+ * Saison 2026/2027 (Stand 15.07.2026), Abschnitt 4–6 — als Richtwerte für die
+ * eigene regionale Spielordnung; verbindlich ist immer der zuständige Verband.
+ */
 export const ageRules: Record<string, AgeRule> = {
-  A: { players: "11 gegen 11", ball: "Größe 5", field: "Großfeld", subs: "Wiedereintritt je nach Spielordnung", offside: "ja" },
-  B: { players: "11 gegen 11", ball: "Größe 5", field: "Großfeld", subs: "Wiedereintritt je nach Spielordnung", offside: "ja" },
-  C: { players: "11 gegen 11", ball: "Größe 5", field: "Großfeld", subs: "Wiederholtes Wechseln erlaubt", offside: "ja" },
-  D: { players: "9 gegen 9", ball: "Größe 4", field: "verkleinertes Großfeld", subs: "fliegender Wechsel", offside: "nein (meist)" },
-  E: { players: "7 gegen 7", ball: "Größe 4", field: "Kleinfeld", subs: "fliegender Wechsel", offside: "nein" },
-  F: { players: "5–7, oft Funino 3+3", ball: "Größe 3/4", field: "Kleinfeld / Mini", subs: "fliegender Wechsel", offside: "nein" },
-  G: { players: "Funino / 2–5", ball: "Größe 3", field: "Minispielfeld", subs: "frei", offside: "nein" },
-  H: { players: "11 gegen 11", ball: "Größe 5", field: "Großfeld", subs: "3–5 je nach Wettbewerb", offside: "ja" },
+  A: { players: "11 gegen 11 (9 gegen 9 möglich)", ball: "Größe 5", field: "Großfeld – min. 100×60 m (Rheinlandebene), sonst min. 90×45 m", subs: "bis zu 5 Auswechselspieler, Wiedereinwechseln zulässig", offside: "ja" },
+  B: { players: "11 gegen 11 (9 gegen 9 möglich)", ball: "Größe 5", field: "Großfeld – min. 100×60 m (Rheinlandebene), sonst min. 90×45 m", subs: "bis zu 5 Auswechselspieler, Wiedereinwechseln zulässig", offside: "ja" },
+  C: { players: "11 gegen 11 (Großfeld) oder 9 gegen 9 (58×45 m)", ball: "Größe 5", field: "Großfeld bzw. 58×45 m (C-9, Strafraum zu Strafraum)", subs: "bis zu 5 Auswechselspieler, Wiedereinwechseln zulässig", offside: "ja" },
+  D: { players: "9 gegen 9 (7 gegen 7 möglich)", ball: "Leichtspielball Größe 4 (350 g)", field: "ca. 70×50 m, min. 58×45 m (D-9); Platzhälfte quer (D-7)", subs: "unbegrenzt, Wiedereinwechseln zulässig", offside: "ja" },
+  E: { players: "7 gegen 7 (inkl. Torwart)", ball: "Leichtspielball Größe 4 (350 g)", field: "Kleinfeld ca. 40×30 m", subs: "bis zu 5 Rotationsspieler", offside: "nein" },
+  F: { players: "3 gegen 3 / 3+1 gegen 3+1, Team max. 5", ball: "Leichtspielball Größe 3 (290 g)", field: "ca. 25×20 m · Turnierspielbetrieb ohne Schiedsrichter", subs: "bis zu 2 Rotationsspieler, nach Tor oder spät. 2 Min.", offside: "nein" },
+  G: { players: "3 gegen 3, Team max. 5", ball: "Leichtspielball Größe 3 (290 g)", field: "ca. 20×15 m · Turnierspielbetrieb ohne Schiedsrichter", subs: "bis zu 2 Rotationsspieler, nach Tor oder spät. 2 Min.", offside: "nein" },
+  H: { players: "11 gegen 11", ball: "Größe 5", field: "Großfeld", subs: "3–5 je nach Wettbewerb (Spielordnung Erwachsene)", offside: "ja" },
 };

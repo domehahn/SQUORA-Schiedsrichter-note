@@ -842,7 +842,11 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
             <div><span className="eyebrow">Spiel anlegen</span><h1 id="setup-title">Welche Jugend spielt heute?</h1></div>
             {match.phase !== "setup" && <button className="text-button danger-text" onClick={resetMatch}><Icon name="trash" /> Neues Spiel</button>}
           </div>
-          <label className="date-field"><span>Spieldatum</span><input type="date" value={match.matchDate} onChange={(event) => patchMatch({ matchDate: event.target.value || todayIso() })} /></label>
+          <div className="setup-name-row">
+            <label className="date-field"><span>Spieldatum</span><input type="date" value={match.matchDate} onChange={(event) => patchMatch({ matchDate: event.target.value || todayIso() })} /></label>
+            <label className="name-field"><span>Spielname (optional)</span><input value={match.matchName} maxLength={60} placeholder=" " onChange={(event) => patchMatch({ matchName: event.target.value })} /></label>
+          </div>
+          <p className="collapsible-hint">Praktisch bei mehreren Begegnungen am selben Tag, z. B. Funino-Runden.</p>
           <div className="setup-grid">
             <label><span>Jugend</span><select value={match.ageGroup} disabled={match.phase !== "setup"} onChange={(event) => {
               const selected = ageGroups.find((group) => group.value === event.target.value)!;
@@ -1193,7 +1197,7 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
             <div className="table-scroll">
               <table className="archive-table">
                 <thead>
-                  <tr><th>Spieldatum</th><th>Gespeichert</th><th>Begegnung</th><th>Ergebnis</th><th>Jugend</th><th>Ereignisse</th><th aria-label="Aktionen" /></tr>
+                  <tr><th>Spieldatum</th><th>Name</th><th>Gespeichert</th><th>Begegnung</th><th>Ergebnis</th><th>Jugend</th><th>Ereignisse</th><th aria-label="Aktionen" /></tr>
                 </thead>
                 <tbody>
                   {archive.map((entry) => {
@@ -1202,6 +1206,7 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
                     return (
                       <tr key={saved.id} className={isOpen ? "row-open" : undefined}>
                         <td>{matchDateLabel(saved)}</td>
+                        <td>{saved.matchName || "–"}</td>
                         <td className="num">{formatDate(entry.savedAt)} · {formatWallClock(entry.savedAt)}</td>
                         <td>{saved.homeTeam} – {saved.awayTeam}{saved.phase === "abandoned" ? " (Abbr.)" : ""}</td>
                         <td className="num">{score(saved.events, "home")} : {score(saved.events, "away")}</td>

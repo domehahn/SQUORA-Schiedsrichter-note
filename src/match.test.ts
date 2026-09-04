@@ -175,4 +175,10 @@ describe("normalizeMatch", () => {
     expect(next.homeFormation).toBe("4-3-3");
     expect(next.homeRoster[0].position).toBe("L2-1");
   });
+
+  it("übernimmt einen optionalen Spielnamen, sonst leer", () => {
+    expect(normalizeMatch({ matchName: "Funino Feld 2, Runde 3" }).matchName).toBe("Funino Feld 2, Runde 3");
+    expect(createMatch().matchName).toBe("");
+    expect(normalizeMatch({}).matchName).toBe("");
+  });
 });
