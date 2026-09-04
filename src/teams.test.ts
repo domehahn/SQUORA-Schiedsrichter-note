@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createSavedTeam, mergeTeams, sanitizeTeams } from "./teams";
+import { createHistoryEntry, createSavedTeam, isHistory, mergeTeams, sanitizeTeams } from "./teams";
 
 describe("teams library", () => {
   it("normalisiert Kader und verwirft Müll", () => {
@@ -18,5 +18,19 @@ describe("teams library", () => {
     const merged = mergeTeams([older], [newer]);
     expect(merged).toHaveLength(1);
     expect(merged[0].name).toBe("Neu");
+  });
+
+  it("sortiert Gegner vor die Historie und Historie nach Datum absteigend", () => {
+    const opponent = createSavedTeam("SV Gegner");
+    const older = { ...createHistoryEntry("roster", "Kader-Stand", []), savedAt: "2026-08-01T00:00:00.000Z" };
+    const newer = { ...createHistoryEntry("lineup", "Aufstellung", []), savedAt: "2026-09-01T00:00:00.000Z" };
+    const merged = mergeTeams([older, newer, opponent]);
+    expect(merged.map((t) => t.kind ?? "opponent")).toEqual(["opponent", "lineup", "roster"]);
+    expect(isHistory(merged[0])).toBe(false);
+  });
+
+  it("trägt kind / savedAt / opponent durch die Sanitisierung", () => {
+    const [entry] = sanitizeTeams([{ id: "h1", kind: "lineup", savedAt: "2026-09-01T00:00:00.000Z", opponent: "SV Gegner", matchDate: "2026-09-01", roster: [] }]);
+    expect(entry).toMatchObject({ kind: "lineup", savedAt: "2026-09-01T00:00:00.000Z", opponent: "SV Gegner", matchDate: "2026-09-01" });
   });
 });

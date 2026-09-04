@@ -182,6 +182,12 @@ export function TournamentReport({ tournament, archive }: { tournament: Tourname
   );
 }
 
+function historyTitle(team: SavedTeam): string {
+  const date = (team.savedAt ?? team.updatedAt).slice(0, 10);
+  if (team.kind === "roster") return `Kader-Stand · ${date}`;
+  return `Aufstellung${team.opponent ? ` vs. ${team.opponent}` : ""} · ${team.matchDate?.slice(0, 10) || date}`;
+}
+
 export function TeamLibraryPanel({ teams, onUpdate, onDelete, onClear, onApply, onAdd, onImportNewTeam, onImportRoster }: {
   teams: SavedTeam[];
   onUpdate: (id: string, patch: Partial<SavedTeam>) => void;
@@ -194,6 +200,8 @@ export function TeamLibraryPanel({ teams, onUpdate, onDelete, onClear, onApply, 
 }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const csvInput = useRef<HTMLInputElement>(null);
+  const opponents = teams.filter((team) => team.kind !== "roster" && team.kind !== "lineup");
+  const history = teams.filter((team) => team.kind === "roster" || team.kind === "lineup");
   return (
     <div className="tournament-panel">
       <div className="tournament-tools">
@@ -206,9 +214,9 @@ export function TeamLibraryPanel({ teams, onUpdate, onDelete, onClear, onApply, 
         }} />
         {teams.length > 0 && <button className="icon-button danger" onClick={onClear}><Icon name="trash" /> Bibliothek leeren</button>}
       </div>
-      <p className="collapsible-hint">DFBnet: „Mannschaften → Spieler → Export" (CSV). Die Liste enthält Namen, aber keine Rückennummern – diese im Kader ergänzen.</p>
-      {teams.length === 0 && <p className="collapsible-hint">Noch keine Teams gespeichert. Lege hier eins an oder speichere ein Team aus „Mannschaftsaufstellungen".</p>}
-      {teams.map((team) => (
+      <p className="collapsible-hint">Gegner-Mannschaften zum Wiederverwenden. Der eigene Kader wird in „Mein Kader" gepflegt; gespeicherte Kader-Stände und Aufstellungen liegen weiter unten als Historie.</p>
+      {opponents.length === 0 && <p className="collapsible-hint">Noch keine Gegner gespeichert. „Team anlegen" oder aus einer DFBnet-CSV importieren.</p>}
+      {opponents.map((team) => (
         <div key={team.id} className={`tournament-card ${expandedId === team.id ? "is-open" : ""}`}>
           <div className="tournament-head-row">
             <button className="tournament-head" onClick={() => setExpandedId((current) => (current === team.id ? null : team.id))}>
@@ -233,6 +241,46 @@ export function TeamLibraryPanel({ teams, onUpdate, onDelete, onClear, onApply, 
           )}
         </div>
       ))}
+
+      {history.length > 0 && (
+        <div className="archived-tournaments">
+          <h4>Historie</h4>
+          <p className="collapsible-hint">Nur Ansicht. Kader-Stände entstehen beim DFBnet-Import, Aufstellungen beim Speichern aus „Mannschaftsaufstellungen".</p>
+          {history.map((team) => (
+            <div key={team.id} className={`tournament-card ${expandedId === team.id ? "is-open" : ""}`}>
+              <div className="tournament-head-row">
+                <button className="tournament-head" onClick={() => setExpandedId((current) => (current === team.id ? null : team.id))}>
+                  <strong>{historyTitle(team)}</strong>
+                  <span>{team.roster.length} Spieler</span>
+                </button>
+                <button className="mini-icon danger" aria-label="Eintrag löschen" onClick={() => onDelete(team.id)}><Icon name="trash" /></button>
+              </div>
+              {expandedId === team.id && (
+                <div className="tournament-body">
+                  <div className="table-scroll">
+                    <table className="roster-table">
+                      <thead><tr><th>Nr.</th><th>Name</th>{team.kind === "lineup" && <th>Status</th>}</tr></thead>
+                      <tbody>
+                        {team.roster.map((player) => (
+                          <tr key={player.id}>
+                            <td className="roster-num">{player.number}</td>
+                            <td>{player.name}</td>
+                            {team.kind === "lineup" && <td>{player.status === "start" ? "Aufgestellt" : player.status === "bench" ? "Bank" : "Nicht nominiert"}</td>}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="tournament-tools">
+                    <button className="icon-button" onClick={() => onApply("home", team.id)}><Icon name="check" /> Als Heim-Aufstellung laden</button>
+                    <button className="icon-button danger" onClick={() => onDelete(team.id)}><Icon name="trash" /> Löschen</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

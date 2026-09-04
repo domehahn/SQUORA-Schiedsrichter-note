@@ -16,6 +16,8 @@ interface Props {
   teamName: string;
   onCopyToLibrary: (entries: RosterExportEntry[]) => void;
   onCopyToLineup: (side: "home" | "away", entries: RosterExportEntry[]) => void;
+  /** Archive the current roster as a read-only "Kader-Stand" history entry (called after a DFBnet import). */
+  onSnapshot: (entries: RosterExportEntry[]) => void;
 }
 
 interface Preview { filename: string; players: ExternalRosterEntry[]; mode: "merge" | "replace" }
@@ -61,7 +63,7 @@ const rowChanged = (row: DraftRow) => {
  * "Bearbeiten", changes are gathered and written on "Speichern". DFBnet CSVs go
  * through the staged /dfbnet/imports endpoint (fingerprint, audit, minimization).
  */
-export function TeamRosterPanel({ clubId, teamId, teamName, onCopyToLibrary, onCopyToLineup }: Props) {
+export function TeamRosterPanel({ clubId, teamId, teamName, onCopyToLibrary, onCopyToLineup, onSnapshot }: Props) {
   const [players, setPlayers] = useState<RosterPlayer[]>([]);
   const [imports, setImports] = useState<DfbnetImportRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -155,7 +157,8 @@ export function TeamRosterPanel({ clubId, teamId, teamName, onCopyToLibrary, onC
     setBusy(false);
     if (!result.ok) { setError("Import fehlgeschlagen."); return; }
     setPreview(null);
-    flash(`${result.recordCount} Spieler importiert (${preview.mode === "replace" ? "ersetzt" : "zusammengeführt"}).`);
+    if (fresh && fresh.length > 0) onSnapshot(fresh.map((p) => ({ name: p.name, number: p.shirtNumber ?? "", pass: p.passNumber ?? "" })));
+    flash(`${result.recordCount} Spieler importiert (${preview.mode === "replace" ? "ersetzt" : "zusammengeführt"}). Kader-Stand in der Historie gesichert.`);
     if (editing) startEdit(fresh ?? players);
   };
 
@@ -228,9 +231,9 @@ export function TeamRosterPanel({ clubId, teamId, teamName, onCopyToLibrary, onC
           </div>
           {players.length > 0 && (
             <div className="roster-actions">
-              <button className="text-button" onClick={() => { onCopyToLibrary(exportEntries()); flash("In die Team-Bibliothek übernommen."); }}><Icon name="check" /> In Team-Bibliothek</button>
               <button className="text-button" onClick={() => { onCopyToLineup("home", exportEntries()); flash("Als Heim-Aufstellung übernommen."); }}><Icon name="check" /> → Heim-Aufstellung</button>
               <button className="text-button" onClick={() => { onCopyToLineup("away", exportEntries()); flash("Als Gast-Aufstellung übernommen."); }}><Icon name="check" /> → Gast-Aufstellung</button>
+              <button className="text-button" onClick={() => { onCopyToLibrary(exportEntries()); flash("Kader-Stand in der Historie gesichert."); }}><Icon name="trophy" /> Als Kader-Stand sichern</button>
             </div>
           )}
         </>}

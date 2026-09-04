@@ -60,7 +60,7 @@ import {
   type Fixture,
   type Tournament,
 } from "./tournament";
-import { createSavedTeam, mergeTeams, type SavedTeam } from "./teams";
+import { createHistoryEntry, createSavedTeam, isHistory, mergeTeams, type SavedTeam } from "./teams";
 import { parseDfbnetRoster } from "./dfbnet";
 import { readCsvFile } from "./integrations/dfbnet/decode";
 import { statsCsvRows } from "./stats";
@@ -707,10 +707,28 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
     }
   };
 
+  const saveLineupToHistory = () => {
+    if (match.homeRoster.length === 0) { flash("Noch keine Heim-Aufstellung vorhanden"); return; }
+    const label = `Aufstellung ${match.homeTeam || "Heim"}`;
+    setTeams((list) => mergeTeams([createHistoryEntry("lineup", label, match.homeRoster.map((player) => ({ ...player })), { opponent: match.awayTeam || undefined, matchDate: match.matchDate || undefined })], list));
+    flash("Aufstellung in der Historie gespeichert");
+  };
+
+  const snapshotKaderToHistory = (entries: { name: string; number: string; pass: string }[]) => {
+    if (entries.length === 0) return;
+    const roster = entries.map((entry) => ({ id: uid(), number: entry.number, name: entry.name, pass: entry.pass, birthdate: "", status: "out" as const }));
+    setTeams((list) => mergeTeams([createHistoryEntry("roster", "Kader-Stand", roster)], list));
+  };
+
   const applyTeamFromLibrary = (side: TeamSide, teamId: string) => {
     const team = teams.find((entry) => entry.id === teamId);
     if (!team) return;
     const roster = team.roster.map((player) => ({ ...player, id: uid() }));
+    if (isHistory(team)) {
+      patchMatch(side === "home" ? { homeRoster: roster } : { awayRoster: roster });
+      flash("Aus Historie geladen");
+      return;
+    }
     patchMatch(side === "home"
       ? { homeTeam: team.name || "Heim", homeRoster: roster }
       : { awayTeam: team.name || "Gast", awayRoster: roster });
@@ -998,7 +1016,7 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
           <div className="roster-editor">
             <div>
               <RosterEditor teamLabel={match.homeTeam || "Heim"} roster={match.homeRoster} grouped onChange={(next) => patchMatch({ homeRoster: next })} onImportCsv={importRosterCsv("home")} />
-              <button className="text-button" onClick={() => saveTeamToLibrary("home")}><Icon name="trophy" /> Heim in Bibliothek speichern</button>
+              <button className="text-button" onClick={saveLineupToHistory}><Icon name="trophy" /> Aufstellung speichern</button>
             </div>
             <div>
               <RosterEditor teamLabel={match.awayTeam || "Gast"} roster={match.awayRoster} grouped onChange={(next) => patchMatch({ awayRoster: next })} onImportCsv={importRosterCsv("away")} />
@@ -1047,18 +1065,14 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
             clubId={tenant.id}
             teamId={team.id}
             teamName={team.name}
-            onCopyToLibrary={(entries) => {
-              const roster = entries.map((entry) => ({ id: uid(), number: entry.number, name: entry.name, pass: entry.pass, birthdate: "", status: "out" as const }));
-              const existing = teams.find((entry) => entry.name.toLowerCase() === team.name.toLowerCase());
-              if (existing) setTeams((list) => list.map((entry) => (entry.id === existing.id ? { ...entry, roster, updatedAt: nowIso() } : entry)));
-              else setTeams((list) => mergeTeams([createSavedTeam(team.name, "", roster)], list));
-            }}
+            onCopyToLibrary={snapshotKaderToHistory}
             onCopyToLineup={(side, entries) => {
               const roster = entries.map((entry) => ({ id: uid(), number: entry.number, name: entry.name, pass: entry.pass, birthdate: "", status: "out" as const }));
               patchMatch(side === "home"
                 ? { homeTeam: match.homeTeam || team.name, homeRoster: roster }
                 : { awayTeam: match.awayTeam || team.name, awayRoster: roster });
             }}
+            onSnapshot={snapshotKaderToHistory}
           />
         </CollapsibleSection>
 
