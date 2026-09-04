@@ -12,9 +12,10 @@ const draftWithGoal = {
   homeTeam: "TuS Kirchberg",
   awayTeam: "SV Testverein",
   events: [
-    { id: "e1", kind: "goal", team: "home", minute: 12, matchMs: 0, label: "Tor TuS Kirchberg · Anna Meier", exactTime: "00:12:00", createdAt: "x" },
-    { id: "e2", kind: "yellow", team: "away", minute: 30, matchMs: 0, label: "Gelb Ben Kern", exactTime: "00:30:00", createdAt: "x" },
+    { id: "e1", kind: "goal", team: "home", player: "9", playerName: "Anna Meier", minute: 12, matchMs: 0, label: "Tor TuS Kirchberg · Anna Meier", exactTime: "00:12:00", createdAt: "x" },
+    { id: "e2", kind: "yellow", team: "away", player: "4", playerName: "Ben Kern", minute: 30, matchMs: 0, label: "Gelb Ben Kern", exactTime: "00:30:00", createdAt: "x" },
     { id: "e3", kind: "note", team: undefined, minute: 5, matchMs: 0, label: "Vorkommnis", text: "Anna Meier verletzt am Knie", exactTime: "00:05:00", createdAt: "x" },
+    { id: "e4", kind: "substitution", team: "home", playerIn: "14", playerInName: "Kim Musterkind", playerOut: "9", playerOutName: "Anna Meier", minute: 40, matchMs: 0, label: "Wechsel #9 -> #14", exactTime: "00:40:00", createdAt: "x" },
   ],
 };
 
@@ -27,7 +28,7 @@ describe("public live ticker", () => {
     expect((await SELF.fetch(shareUrl(TEAM_A), { method: "POST", headers: jsonHeaders(cookieA) })).status).toBe(409);
   });
 
-  it("exposes score and generic events but never player names, free text, or the raw label", async () => {
+  it("exposes score, shirt numbers and generic events but never player names, free text, or the raw label", async () => {
     const { cookieA } = await seedTwoTenants();
     await SELF.fetch(stateUrl(TEAM_A), { method: "PUT", headers: jsonHeaders(cookieA), body: JSON.stringify({ version: 0, archive: [], deletedIds: [], tournaments: [], teams: [], current: draftWithGoal }) });
 
@@ -38,15 +39,17 @@ describe("public live ticker", () => {
 
     const view = await SELF.fetch(publicUrl(token)); // no cookie: public
     expect(view.status).toBe(200);
-    const body = await view.json<{ homeTeam: string; awayTeam: string; homeScore: number; awayScore: number; phase: string; events: { minute: number; team: string | null; label: string }[] }>();
+    const body = await view.json<{ homeTeam: string; awayTeam: string; homeScore: number; awayScore: number; phase: string; events: { minute: number; team: string | null; label: string; detail?: string }[] }>();
     expect(body).toMatchObject({ homeTeam: "TuS Kirchberg", awayTeam: "SV Testverein", homeScore: 1, awayScore: 0, phase: "firstHalf" });
     expect(body.events).toEqual([
-      { minute: 12, team: "home", label: "Tor" },
-      { minute: 30, team: "away", label: "Gelbe Karte" },
+      { minute: 12, team: "home", label: "Tor", detail: "#9" },
+      { minute: 30, team: "away", label: "Gelbe Karte", detail: "#4" },
+      { minute: 40, team: "home", label: "Wechsel", detail: "#9 → #14" },
     ]);
     const dump = JSON.stringify(body);
     expect(dump).not.toContain("Anna Meier");
     expect(dump).not.toContain("Ben Kern");
+    expect(dump).not.toContain("Musterkind");
     expect(dump).not.toContain("Knie");
     expect(dump).not.toContain("Vorkommnis");
   });

@@ -32,7 +32,10 @@
       var event = events[i];
       var li = document.createElement("li");
       var side = event.team === "home" ? data.homeTeam : event.team === "away" ? data.awayTeam : "";
-      li.textContent = event.minute + "' " + event.label + (side ? " · " + side : "");
+      var text = event.minute + "' " + event.label;
+      if (event.detail) text += " · " + event.detail;
+      if (side) text += " · " + side;
+      li.textContent = text;
       el.events.appendChild(li);
     }
     if (events.length === 0) {
@@ -58,5 +61,5 @@
   }
 
   poll();
-  setInterval(poll, 8000);
+  setInterval(poll, 5000);
 })();

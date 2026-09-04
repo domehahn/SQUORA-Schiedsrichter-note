@@ -10,7 +10,8 @@ const NOT_FOUND = new HttpError(404, "NOT_FOUND", "The requested resource was no
 /**
  * Public live-ticker labels. Deliberately generic — never the stored free-text
  * `label`/`text`/player-name fields, which the referee's own device may show
- * but a public unauthenticated page never does.
+ * but a public unauthenticated page never does. The shirt number (never the
+ * name) is added separately as `detail`.
  */
 const PUBLIC_EVENT_LABELS: Record<string, string> = {
   goal: "Tor", ownGoal: "Tor", penaltyGoal: "Tor (Elfmeter)", penaltyMissed: "Elfmeter verschossen",
@@ -18,8 +19,13 @@ const PUBLIC_EVENT_LABELS: Record<string, string> = {
   timePenalty: "Zeitstrafe", substitution: "Wechsel",
 };
 
-interface DraftEvent { kind?: unknown; team?: unknown; minute?: unknown }
+interface DraftEvent { kind?: unknown; team?: unknown; minute?: unknown; player?: unknown; playerIn?: unknown; playerOut?: unknown }
 interface DraftPayload { homeTeam?: unknown; awayTeam?: unknown; phase?: unknown; events?: unknown }
+
+/** Shirt number only — never a name. Bounded the same as Player.number. */
+function shirtNumber(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim().slice(0, 4) : null;
+}
 
 function mintToken(): { token: string; tokenHash: Promise<string> } {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
@@ -36,7 +42,7 @@ function publicView(payloadJson: string, updatedAt: string): Record<string, unkn
   const rawEvents = Array.isArray(payload.events) ? payload.events as DraftEvent[] : [];
   let homeScore = 0;
   let awayScore = 0;
-  const events: { minute: number; team: string | null; label: string }[] = [];
+  const events: { minute: number; team: string | null; label: string; detail?: string }[] = [];
   for (const event of rawEvents) {
     const kind = typeof event.kind === "string" ? event.kind : "";
     const team = event.team === "home" || event.team === "away" ? event.team : null;
@@ -44,7 +50,18 @@ function publicView(payloadJson: string, updatedAt: string): Record<string, unkn
     if (kind === "goal" || kind === "penaltyGoal") { if (team === "home") homeScore += 1; else if (team === "away") awayScore += 1; }
     if (kind === "ownGoal") { if (team === "home") awayScore += 1; else if (team === "away") homeScore += 1; }
     const label = PUBLIC_EVENT_LABELS[kind];
-    if (label) events.push({ minute, team, label });
+    if (!label) continue;
+    // shirt number only, never a name or free text — kept out of the label deliberately
+    let detail: string | undefined;
+    if (kind === "substitution") {
+      const numberIn = shirtNumber(event.playerIn);
+      const numberOut = shirtNumber(event.playerOut);
+      detail = numberOut && numberIn ? `#${numberOut} → #${numberIn}` : numberIn ? `#${numberIn}` : numberOut ? `#${numberOut}` : undefined;
+    } else {
+      const number = shirtNumber(event.player);
+      detail = number ? `#${number}` : undefined;
+    }
+    events.push({ minute, team, label, ...(detail ? { detail } : {}) });
   }
   return {
     homeTeam: typeof payload.homeTeam === "string" ? payload.homeTeam.slice(0, 40) || "Heim" : "Heim",
@@ -78,7 +95,7 @@ export async function disableLiveShare(request: Request, env: Env, auth: AuthCon
   return json({ ok: true }, requestId);
 }
 
-/** Public, unauthenticated: score + generic event log only. No player names, no free text, no ids. */
+/** Public, unauthenticated: score + generic event log with shirt numbers only. No player names, no free text, no ids. */
 export async function getPublicLive(request: Request, env: Env, token: string, requestId: string): Promise<Response> {
   await enforceRateLimit(env.LOGIN_RATE_LIMITER, [clientIp(request), "live.view"]);
   if (typeof token !== "string" || token.length < 20 || token.length > 64) throw NOT_FOUND;
