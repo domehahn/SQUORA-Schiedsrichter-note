@@ -8,6 +8,7 @@ import { listLegacyTenants, migrateLegacy, readLegacyPayload } from "./api/legac
 import { getState, putState } from "./api/state";
 import { createTeam, listTeams } from "./api/teams";
 import { confirmDfbnetImport, createDfbnetImport, listDfbnetImports } from "./api/dfbnet";
+import { createPlayer, deletePlayer, listPlayers, updatePlayer } from "./api/players";
 import { requireAuth, type AuthContext } from "./auth/session";
 import { errorResponse, HttpError, recordRequest, SECURITY_HEADERS, withHeaders } from "./core/http";
 import { readLegacy } from "./legacy/kv-migration";
@@ -144,6 +145,23 @@ async function routeAuthenticated(request: Request, env: Env, auth: AuthContext,
     const teamId = decodeURIComponent(importConfirm[2]);
     const importId = decodeURIComponent(importConfirm[3]);
     if (request.method === "POST") return confirmDfbnetImport(request, env, auth, clubId, teamId, importId, requestId);
+    return methodNotAllowed();
+  }
+  const players = path.match(/^\/api\/v1\/clubs\/([^/]+)\/teams\/([^/]+)\/players$/u);
+  if (players) {
+    const clubId = decodeURIComponent(players[1]);
+    const teamId = decodeURIComponent(players[2]);
+    if (request.method === "GET") return listPlayers(env, auth, clubId, teamId, requestId);
+    if (request.method === "POST") return createPlayer(request, env, auth, clubId, teamId, requestId);
+    return methodNotAllowed();
+  }
+  const player = path.match(/^\/api\/v1\/clubs\/([^/]+)\/teams\/([^/]+)\/players\/([^/]+)$/u);
+  if (player) {
+    const clubId = decodeURIComponent(player[1]);
+    const teamId = decodeURIComponent(player[2]);
+    const playerId = decodeURIComponent(player[3]);
+    if (request.method === "PATCH") return updatePlayer(request, env, auth, clubId, teamId, playerId, requestId);
+    if (request.method === "DELETE") return deletePlayer(request, env, auth, clubId, teamId, playerId, requestId);
     return methodNotAllowed();
   }
   const matches = path.match(/^\/api\/v1\/clubs\/([^/]+)\/matches$/u);
