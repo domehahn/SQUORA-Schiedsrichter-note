@@ -1,0 +1,27 @@
+# gitleaks configuration for SQUORA Schiedsrichter Note.
+# Extends the bundled default ruleset; adds an allowlist for the project's
+# documented synthetic test material so the full-history scan stays actionable.
+# See docs/security/GIT_HISTORY_PII_RESPONSE.md.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Synthetic fixtures and known-benign placeholders (never real credentials)"
+regexes = [
+  # All-zero dummy hash for invited/not-yet-registered accounts.
+  '''pbkdf2-sha256\$[0-9*]+\$0{32}\$0{64}''',
+  # Fixed synthetic test-user hash (salt 0101…), password is not secret.
+  '''pbkdf2-sha256\$100000\$01010101010101010101010101010101\$[0-9a-f]{64}''',
+  # scrypt test vectors use the same 0101… salt convention.
+  '''scrypt\$[0-9a-z=,]+\$01010101010101010101010101010101\$[0-9a-f]{64}''',
+  # Placeholder session secret used only in unit tests.
+  '''unit-test-session-secret-with-at-least-32-bytes''',
+]
+paths = [
+  '''.*\.test\.ts$''',
+  '''cloudflare/test/.*''',
+  '''tests/.*''',
+  '''vitest.*\.config\.ts$''',
+  '''scripts/hash-password\.mjs$''',
+]

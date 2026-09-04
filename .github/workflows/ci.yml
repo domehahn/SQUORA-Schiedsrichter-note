@@ -91,10 +91,12 @@ jobs:
           retention-days: 7
 
   security:
-    name: Dependency & secret scan
+    name: Dependency, secret & PII scan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history for the git-history scanners below
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -102,7 +104,13 @@ jobs:
       - run: npm ci
       - name: npm audit (high+ fails the build)
         run: npm audit --audit-level=high --registry=https://registry.npmjs.com
-      - name: Guard against committed secrets
+      - name: gitleaks (full history secret scan)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+          # gitleaks-action is free for public repos; no GITLEAKS_LICENSE needed.
+      - name: Guard against committed secrets (working tree)
         run: |
           set -uo pipefail
           hits=$(git grep -nEI \
@@ -117,6 +125,8 @@ jobs:
             exit 1
           fi
           echo "No obvious secret material found in tracked files."
+      - name: DFBnet / PII fixture guard (full history)
+        run: node scripts/check-pii-history.mjs
 
   codeql:
     name: CodeQL
