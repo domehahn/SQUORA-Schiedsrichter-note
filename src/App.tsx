@@ -1049,7 +1049,15 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
         >
           <div className="roster-editor">
             <div>
-              <RosterEditor teamLabel={match.homeTeam || "Heim"} roster={match.homeRoster} grouped arrangeOnly formationId={match.homeFormation} onChange={(next) => patchMatch({ homeRoster: next })} />
+              <RosterEditor
+                teamLabel={match.homeTeam || "Heim"}
+                roster={match.homeRoster}
+                grouped
+                arrangeOnly
+                formationId={match.homeFormation}
+                onChange={(next) => patchMatch({ homeRoster: next })}
+                onAssignPosition={(playerId, slot) => assignPosition("home", playerId, slot)}
+              />
               <p className="collapsible-hint">Spieler kommen aus „Mein Kader" (→ Heim-Aufstellung). Hier nur Aufgestellt / Bank / Nicht nominiert.</p>
               <PitchView
                 teamLabel={match.homeTeam || "Heim"}

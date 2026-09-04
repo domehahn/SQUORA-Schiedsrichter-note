@@ -19,9 +19,10 @@ test("shares a live match and a spectator sees the score without logging in", as
 
   await page.getByRole("button", { name: "Liveticker" }).click();
   await page.getByRole("button", { name: "Liveticker freigeben" }).click();
-  const link = page.locator(".live-share input[readonly]");
-  await expect(link).toHaveValue(/\/live\//);
-  const url = await link.inputValue();
+  await expect(page.locator(".live-share-qr")).toBeVisible();
+  const link = page.locator(".live-share-link");
+  await expect(link).toHaveAttribute("href", /\/live\//);
+  const url = (await link.getAttribute("href"))!;
 
   // a genuinely separate, cookie-free context — this must work with no session at all
   const spectatorContext = await browser.newContext();

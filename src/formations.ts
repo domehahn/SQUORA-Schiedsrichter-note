@@ -51,10 +51,34 @@ export function nearestFormation(starterCount: number): Formation {
   return bySizeDiff[0];
 }
 
-function lineLabel(lineIndex: number, lineCount: number): string {
-  if (lineIndex === 0) return "AB";
-  if (lineIndex === lineCount - 1) return "ST";
-  return "MF";
+/** Full German names for every chip shown, keyed by its abbreviation (used as a tooltip). */
+export const POSITION_NAMES: Record<string, string> = {
+  TW: "Torwart", LV: "Linksverteidigung", IV: "Innenverteidigung", RV: "Rechtsverteidigung",
+  LM: "Linkes Mittelfeld", ZM: "Zentrales Mittelfeld", RM: "Rechtes Mittelfeld",
+  LA: "Linksaußen", ST: "Sturm", RA: "Rechtsaußen",
+};
+
+/** Left-to-right role names for one line, by its role (defence/midfield/attack) and player count. */
+function lineLabels(lineIndex: number, lineCount: number, size: number): string[] {
+  const isDefence = lineIndex === 0;
+  const isAttack = lineIndex === lineCount - 1;
+  if (isDefence) {
+    if (size <= 1) return ["IV"];
+    if (size === 2) return ["IV", "IV"];
+    if (size === 3) return ["LV", "IV", "RV"];
+    if (size === 4) return ["LV", "IV", "IV", "RV"];
+    return ["LV", "IV", "IV", "IV", "RV"];
+  }
+  if (isAttack) {
+    if (size <= 1) return ["ST"];
+    if (size === 2) return ["ST", "ST"];
+    return ["LA", "ST", "RA"];
+  }
+  if (size <= 1) return ["ZM"];
+  if (size === 2) return ["ZM", "ZM"];
+  if (size === 3) return ["LM", "ZM", "RM"];
+  if (size === 4) return ["LM", "ZM", "ZM", "RM"];
+  return ["LM", "ZM", "ZM", "ZM", "RM"];
 }
 
 /** Goalkeeper plus one slot per outfield player, percentage coordinates (x: 0 left – 100 right, y: 0 attacking end – 100 own goal). */
@@ -63,11 +87,17 @@ export function formationSlots(formation: Formation): FormationSlot[] {
   const lineCount = formation.lines.length;
   formation.lines.forEach((count, lineIndex) => {
     const y = lineCount === 1 ? 45 : 78 - lineIndex * (66 / (lineCount - 1));
-    const label = lineLabel(lineIndex, lineCount);
-    for (let i = 0; i < count; i += 1) {
+    const labels = lineLabels(lineIndex, lineCount, count);
+    const totalByLabel = new Map<string, number>();
+    for (const label of labels) totalByLabel.set(label, (totalByLabel.get(label) ?? 0) + 1);
+    const seenByLabel = new Map<string, number>();
+    labels.forEach((label, i) => {
+      const occurrence = (seenByLabel.get(label) ?? 0) + 1;
+      seenByLabel.set(label, occurrence);
+      const displayLabel = totalByLabel.get(label)! > 1 ? `${label}${occurrence}` : label;
       const x = ((i + 1) / (count + 1)) * 100;
-      slots.push({ key: `L${lineIndex}-${i}`, label: count > 1 ? `${label}${i + 1}` : label, x, y });
-    }
+      slots.push({ key: `L${lineIndex}-${i}`, label: displayLabel, x, y });
+    });
   });
   return slots;
 }

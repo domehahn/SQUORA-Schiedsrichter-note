@@ -212,14 +212,15 @@ input:disabled, select:disabled { color: #6a7687; background: #f4f6f9; }
 .roster-actions { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 6px; }
 
 .live-share { margin: 10px 0 16px; padding: 12px; border: 1px solid #e2e8f1; border-radius: 10px; background: #f7fafd; max-width: 320px; }
-.live-share label { display: block; margin: 8px 0; font-size: 12px; font-weight: 700; color: #46566e; }
-.live-share input { width: 100%; margin-top: 4px; }
 .live-share-qr { display: block; margin: 0 auto; border-radius: 8px; background: #fff; padding: 6px; }
+.live-share-link { display: block; margin: 4px 0 8px; padding: 8px 10px; border: 1px solid #dbe4ee; border-radius: 8px; background: #fff; color: #2a4a74; font-weight: 700; font-size: 13px; word-break: break-all; text-decoration: none; }
+.live-share-link:hover { border-color: #9fbadd; text-decoration: underline; }
 
-.position-chip { display: inline-flex; flex-direction: column; align-items: center; gap: 1px; min-width: 44px; padding: 3px 8px; border-radius: 8px; background: #0b2559; color: #fff; }
-.position-chip strong { font-size: 12px; line-height: 1.1; }
-.position-chip small { font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em; opacity: .85; line-height: 1.1; max-width: 60px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.roster-table td.roster-position { text-align: center; }
+.roster-table td.roster-position { text-align: left; min-width: 220px; }
+.position-chip-group { display: flex; flex-wrap: wrap; gap: 3px; max-width: 260px; }
+.position-chip-btn { border: 1px solid #dbe4ee; background: #fff; color: #46566e; border-radius: 6px; padding: 3px 6px; font-size: 10px; font-weight: 800; line-height: 1.4; min-height: 24px; }
+.position-chip-btn:hover { border-color: #9fbadd; color: #2a4a74; }
+.position-chip-btn.active { background: #0b2559; border-color: #0b2559; color: #fff; }
 
 .pitch-view { margin: 10px 0; }
 .pitch-tools { display: flex; margin-bottom: 8px; }

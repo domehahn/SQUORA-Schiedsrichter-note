@@ -45,7 +45,7 @@ export function LiveTickerControl({ clubId, teamId }: Props) {
   };
 
   if (!open) {
-    return <button className="icon-button" onClick={toggle}><Icon name="share" /> Liveticker</button>;
+    return <button className="icon-button" onClick={toggle}><Icon name="share" /> Liveticker &amp; QR-Code</button>;
   }
 
   if (!token) {
@@ -69,7 +69,8 @@ export function LiveTickerControl({ clubId, teamId }: Props) {
   return (
     <div className="live-share">
       <img className="live-share-qr" src={qr.createDataURL(6, 4)} width={148} height={148} alt="QR-Code zum Liveticker" />
-      <label><span>Link</span><input readOnly value={url} onFocus={(event) => event.target.select()} /></label>
+      <p className="collapsible-hint">QR-Code scannen oder direkt öffnen:</p>
+      <a className="live-share-link" href={url} target="_blank" rel="noopener noreferrer">{url}</a>
       <div className="roster-actions">
         <button
           className="text-button"

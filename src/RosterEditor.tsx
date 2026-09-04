@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import { Icon } from "./icons";
-import { findFormation, formationSlots, nearestFormation } from "./formations";
+import { findFormation, formationSlots, nearestFormation, POSITION_NAMES } from "./formations";
 import { uid, type LineupStatus, type Player } from "./match";
 
 export const LINEUP_GROUPS: { key: LineupStatus; label: string; short: string }[] = [
@@ -14,10 +14,11 @@ export const LINEUP_GROUPS: { key: LineupStatus; label: string; short: string }[
  * player fields are read-only and there is no add / CSV import — only the
  * Aufgestellt / Bank / Nicht nominiert assignment and removal. Roster master
  * data is edited in "Mein Kader". `formationId` (arrangeOnly + grouped) swaps
- * the otherwise-always-empty birthdate column for a position chip mirroring
- * the pitch sketch, with the player's name underneath.
+ * the otherwise-always-empty birthdate column for a row of position chips
+ * (Torwart, Linksverteidigung, Sturm, …) — tap one to assign it, exactly the
+ * same assignment the pitch sketch below uses, so both stay in sync.
  */
-export function RosterEditor({ teamLabel, roster, onChange, onImportCsv, grouped = false, arrangeOnly = false, formationId }: {
+export function RosterEditor({ teamLabel, roster, onChange, onImportCsv, grouped = false, arrangeOnly = false, formationId, onAssignPosition }: {
   teamLabel: string;
   roster: Player[];
   onChange: (next: Player[]) => void;
@@ -25,12 +26,13 @@ export function RosterEditor({ teamLabel, roster, onChange, onImportCsv, grouped
   grouped?: boolean;
   arrangeOnly?: boolean;
   formationId?: string;
+  onAssignPosition?: (playerId: string, slotKey: string | null) => void;
 }) {
   const update = (id: string, patch: Partial<Player>) => onChange(roster.map((player) => (player.id === id ? { ...player, ...patch } : player)));
   const csvInput = useRef<HTMLInputElement>(null);
   const starterCount = roster.filter((player) => (player.status ?? "out") === "start").length;
   const formation = arrangeOnly ? findFormation(formationId ?? "") ?? nearestFormation(starterCount || 11) : null;
-  const positionLabels = formation ? new Map(formationSlots(formation).map((slot) => [slot.key, slot.label])) : null;
+  const positionSlots = formation ? formationSlots(formation) : [];
 
   const row = (player: Player) => (
     <tr key={player.id}>
@@ -60,11 +62,24 @@ export function RosterEditor({ teamLabel, roster, onChange, onImportCsv, grouped
         <td>{player.name}</td>
         <td className="roster-pass">{player.pass ?? ""}</td>
         <td className="roster-position">
-          {player.status === "start" && player.position && positionLabels?.has(player.position) ? (
-            <span className="position-chip">
-              <strong>{positionLabels.get(player.position)}</strong>
-              <small>{player.name.split(" ").at(-1) ?? player.name}</small>
-            </span>
+          {player.status === "start" && onAssignPosition ? (
+            <div className="position-chip-group" role="group" aria-label="Position">
+              {positionSlots.map((slot) => {
+                const active = player.position === slot.key;
+                return (
+                  <button
+                    key={slot.key}
+                    type="button"
+                    className={`position-chip-btn ${active ? "active" : ""}`}
+                    aria-pressed={active}
+                    title={POSITION_NAMES[slot.label.replace(/\d+$/u, "")] ?? slot.label}
+                    onClick={() => onAssignPosition(player.id, active ? null : slot.key)}
+                  >
+                    {slot.label}
+                  </button>
+                );
+              })}
+            </div>
           ) : "–"}
         </td>
       </> : <>
