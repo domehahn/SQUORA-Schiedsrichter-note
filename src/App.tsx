@@ -7,6 +7,7 @@ import { cue, unlockAudio } from "./notify";
 import { TenantGate } from "./TenantGate";
 import { RosterEditor } from "./RosterEditor";
 import { PitchView } from "./PitchView";
+import { findFormation, formationSlots } from "./formations";
 import { LiveTickerControl } from "./LiveTickerControl";
 import { CollapsibleSection, MetaPanel, SessionExpiredModal, StatsPanel, TeamActions, TeamLibraryPanel, TournamentPanel, TournamentReport } from "./panels";
 import { TeamRosterPanel } from "./TeamRosterPanel";
@@ -731,6 +732,15 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
     patchMatch({ [key]: next } as Partial<MatchState>);
   };
 
+  /** Fills the away side with a synthetic 4-4-2 lineup + bench, so the pitch/roster can be tried out without a real opponent roster on hand. */
+  const generateDummyOpponent = () => {
+    const formation = findFormation("4-4-2")!;
+    const starters: Player[] = formationSlots(formation).map((slot, index) => ({ id: uid(), number: String(index + 1), name: `Spieler ${index + 1}`, pass: "", birthdate: "", status: "start", position: slot.key }));
+    const bench: Player[] = [12, 13, 14].map((number) => ({ id: uid(), number: String(number), name: `Spieler ${number}`, pass: "", birthdate: "", status: "bench" }));
+    patchMatch({ awayTeam: match.awayTeam || "Dummy-Gegner", awayRoster: [...starters, ...bench], awayFormation: "4-4-2" });
+    flash("Dummy-Gegner erzeugt (synthetisch, zum Ausprobieren)");
+  };
+
   const saveLineupToHistory = () => {
     if (match.homeRoster.length === 0) { flash("Noch keine Heim-Aufstellung vorhanden"); return; }
     const label = `Aufstellung ${match.homeTeam || "Heim"}`;
@@ -1039,7 +1049,7 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
         >
           <div className="roster-editor">
             <div>
-              <RosterEditor teamLabel={match.homeTeam || "Heim"} roster={match.homeRoster} grouped arrangeOnly onChange={(next) => patchMatch({ homeRoster: next })} />
+              <RosterEditor teamLabel={match.homeTeam || "Heim"} roster={match.homeRoster} grouped arrangeOnly formationId={match.homeFormation} onChange={(next) => patchMatch({ homeRoster: next })} />
               <p className="collapsible-hint">Spieler kommen aus „Mein Kader" (→ Heim-Aufstellung). Hier nur Aufgestellt / Bank / Nicht nominiert.</p>
               <PitchView
                 teamLabel={match.homeTeam || "Heim"}
@@ -1052,6 +1062,7 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
             </div>
             <div>
               <RosterEditor teamLabel={match.awayTeam || "Gast"} roster={match.awayRoster} grouped onChange={(next) => patchMatch({ awayRoster: next })} onImportCsv={importRosterCsv("away")} />
+              <button className="text-button" onClick={generateDummyOpponent}><Icon name="user" /> Dummy-Gegner erzeugen</button>
               <PitchView
                 teamLabel={match.awayTeam || "Gast"}
                 roster={match.awayRoster}

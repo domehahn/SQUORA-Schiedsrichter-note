@@ -1,5 +1,6 @@
 import { useRef } from "react";
 import { Icon } from "./icons";
+import { findFormation, formationSlots, nearestFormation } from "./formations";
 import { uid, type LineupStatus, type Player } from "./match";
 
 export const LINEUP_GROUPS: { key: LineupStatus; label: string; short: string }[] = [
@@ -12,18 +13,24 @@ export const LINEUP_GROUPS: { key: LineupStatus; label: string; short: string }[
  * Team roster table, optionally grouped by lineup status. With `arrangeOnly` the
  * player fields are read-only and there is no add / CSV import — only the
  * Aufgestellt / Bank / Nicht nominiert assignment and removal. Roster master
- * data is edited in "Mein Kader".
+ * data is edited in "Mein Kader". `formationId` (arrangeOnly + grouped) swaps
+ * the otherwise-always-empty birthdate column for a position chip mirroring
+ * the pitch sketch, with the player's name underneath.
  */
-export function RosterEditor({ teamLabel, roster, onChange, onImportCsv, grouped = false, arrangeOnly = false }: {
+export function RosterEditor({ teamLabel, roster, onChange, onImportCsv, grouped = false, arrangeOnly = false, formationId }: {
   teamLabel: string;
   roster: Player[];
   onChange: (next: Player[]) => void;
   onImportCsv?: (file: File) => void;
   grouped?: boolean;
   arrangeOnly?: boolean;
+  formationId?: string;
 }) {
   const update = (id: string, patch: Partial<Player>) => onChange(roster.map((player) => (player.id === id ? { ...player, ...patch } : player)));
   const csvInput = useRef<HTMLInputElement>(null);
+  const starterCount = roster.filter((player) => (player.status ?? "out") === "start").length;
+  const formation = arrangeOnly ? findFormation(formationId ?? "") ?? nearestFormation(starterCount || 11) : null;
+  const positionLabels = formation ? new Map(formationSlots(formation).map((slot) => [slot.key, slot.label])) : null;
 
   const row = (player: Player) => (
     <tr key={player.id}>
@@ -52,7 +59,14 @@ export function RosterEditor({ teamLabel, roster, onChange, onImportCsv, grouped
         <td className="roster-num">{player.number}</td>
         <td>{player.name}</td>
         <td className="roster-pass">{player.pass ?? ""}</td>
-        <td className="roster-birth">{player.birthdate ?? ""}</td>
+        <td className="roster-position">
+          {player.status === "start" && player.position && positionLabels?.has(player.position) ? (
+            <span className="position-chip">
+              <strong>{positionLabels.get(player.position)}</strong>
+              <small>{player.name.split(" ").at(-1) ?? player.name}</small>
+            </span>
+          ) : "–"}
+        </td>
       </> : <>
         <td><input className="roster-num" inputMode="numeric" maxLength={4} placeholder="–" value={player.number} onChange={(event) => update(player.id, { number: event.target.value })} /></td>
         <td><input className="roster-name" maxLength={60} placeholder="Name" value={player.name} onChange={(event) => update(player.id, { name: event.target.value })} /></td>
@@ -66,7 +80,7 @@ export function RosterEditor({ teamLabel, roster, onChange, onImportCsv, grouped
   const head = (
     <tr>
       {grouped && <th>Status</th>}
-      <th>Nr.</th><th>Name</th><th>Passnr.</th><th>Geb.</th><th aria-label="Entfernen" />
+      <th>Nr.</th><th>Name</th><th>Passnr.</th><th>{arrangeOnly ? "Position" : "Geb."}</th><th aria-label="Entfernen" />
     </tr>
   );
 
