@@ -10,15 +10,20 @@ import { requireAuth, type AuthContext } from "./auth/session";
 import { errorResponse, HttpError, recordRequest, SECURITY_HEADERS, withHeaders } from "./core/http";
 import { readLegacy } from "./legacy/kv-migration";
 
-const LEGACY_PREFIX = "/schiedsrichter-note";
+/**
+ * The application is mounted at squora.de/schiedsrichter-note/. Every incoming
+ * path is normalised by stripping this prefix, and every outgoing URL the Worker
+ * emits (login page assets, form actions, redirects) is prefixed with it.
+ */
+const MOUNT_PATH = "/schiedsrichter-note";
 
 function relativePath(pathname: string): string {
-  return pathname === LEGACY_PREFIX ? "/" : pathname.startsWith(`${LEGACY_PREFIX}/`) ? pathname.slice(LEGACY_PREFIX.length) : pathname;
+  return pathname === MOUNT_PATH ? "/" : pathname.startsWith(`${MOUNT_PATH}/`) ? pathname.slice(MOUNT_PATH.length) : pathname;
 }
 
 function loginHtml(error = ""): string {
   const message = error ? `<div class="error" role="alert">${error}</div>` : "";
-  return `<!doctype html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#0b2559"><title>Anmelden · SQUORA Schiedsrichter Note</title><link rel="stylesheet" href="/login.css"></head><body><main><div class="brand"><strong>SQUORA</strong><small>Schiedsrichter Note</small></div><span class="eyebrow">Geschützter Bereich</span><h1>Willkommen zurück</h1><p>Melde dich an, um deine digitale Spielnotiz zu öffnen.</p>${message}<form method="post" action="/auth/login"><label for="email">E-Mail-Adresse</label><input id="email" name="email" type="email" autocomplete="username" maxlength="254" required autofocus><label for="password">Passwort</label><input id="password" name="password" type="password" autocomplete="current-password" maxlength="1024" required><button type="submit">Anmelden</button></form></main></body></html>`;
+  return `<!doctype html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#0b2559"><title>Anmelden · SQUORA Schiedsrichter Note</title><link rel="stylesheet" href="${MOUNT_PATH}/login.css"></head><body><main><div class="brand"><strong>SQUORA</strong><small>Schiedsrichter Note</small></div><span class="eyebrow">Geschützter Bereich</span><h1>Willkommen zurück</h1><p>Melde dich an, um deine digitale Spielnotiz zu öffnen.</p>${message}<form method="post" action="${MOUNT_PATH}/auth/login"><label for="email">E-Mail-Adresse</label><input id="email" name="email" type="email" autocomplete="username" maxlength="254" required autofocus><label for="password">Passwort</label><input id="password" name="password" type="password" autocomplete="current-password" maxlength="1024" required><button type="submit">Anmelden</button></form></main></body></html>`;
 }
 
 function loginPage(requestId: string, error = "", status = 200): Response {
@@ -34,7 +39,7 @@ function redirect(location: string, requestId: string, cookie?: string): Respons
 async function formLogin(request: Request, env: Env, requestId: string): Promise<Response> {
   try {
     const response = await login(request, env, requestId);
-    return redirect("/", requestId, response.headers.get("Set-Cookie") ?? undefined);
+    return redirect(`${MOUNT_PATH}/`, requestId, response.headers.get("Set-Cookie") ?? undefined);
   } catch (error) {
     if (error instanceof HttpError && (error.status === 401 || error.status === 429)) return loginPage(requestId, error.message, error.status);
     throw error;
@@ -56,7 +61,7 @@ async function routeAuthenticated(request: Request, env: Env, auth: AuthContext,
   if (path === "/api/v1/auth/logout-all" && request.method === "POST") return logout(request, env, requestId, true);
   if (path === "/auth/logout" && request.method === "POST") {
     const response = await logout(request, env, requestId);
-    return redirect("/", requestId, response.headers.get("Set-Cookie") ?? undefined);
+    return redirect(`${MOUNT_PATH}/`, requestId, response.headers.get("Set-Cookie") ?? undefined);
   }
   if (path === "/api/v1/clubs") {
     if (request.method === "GET") return listClubs(env, auth, requestId);

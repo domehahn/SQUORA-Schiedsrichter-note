@@ -23,7 +23,7 @@
     { "name": "IMPORT_RATE_LIMITER", "namespace_id": "2026090312", "simple": { "limit": 20, "period": 60 } }
   ],
   "routes": [
-    { "pattern": "schiri.squora.de", "custom_domain": true }
+    { "pattern": "squora.de/schiedsrichter-note*", "zone_name": "squora.de" }
   ],
   "assets": {
     "directory": "./dist",

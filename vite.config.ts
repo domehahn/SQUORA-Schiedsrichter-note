@@ -40,7 +40,9 @@ export default defineConfig(({ mode }) => {
           navigateFallback: null,
           runtimeCaching: [
             {
-              urlPattern: ({ url }) => url.pathname.startsWith("/api/") || url.pathname.startsWith("/auth/"),
+              // Never cache API/auth traffic, regardless of the mount prefix
+              // (production is served under /schiedsrichter-note/).
+              urlPattern: ({ url }) => /(^|\/)(api|auth)\//.test(url.pathname),
               handler: "NetworkOnly",
             },
             {
