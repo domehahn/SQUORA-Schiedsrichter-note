@@ -8,13 +8,19 @@ export const LINEUP_GROUPS: { key: LineupStatus; label: string; short: string }[
   { key: "out", label: "Nicht nominiert", short: "Nicht" },
 ];
 
-/** Editable team roster table, optionally grouped by lineup status (Aufgestellt / Bank / Nicht nominiert). */
-export function RosterEditor({ teamLabel, roster, onChange, onImportCsv, grouped = false }: {
+/**
+ * Team roster table, optionally grouped by lineup status. With `arrangeOnly` the
+ * player fields are read-only and there is no add / CSV import — only the
+ * Aufgestellt / Bank / Nicht nominiert assignment and removal. Roster master
+ * data is edited in "Mein Kader".
+ */
+export function RosterEditor({ teamLabel, roster, onChange, onImportCsv, grouped = false, arrangeOnly = false }: {
   teamLabel: string;
   roster: Player[];
   onChange: (next: Player[]) => void;
   onImportCsv?: (file: File) => void;
   grouped?: boolean;
+  arrangeOnly?: boolean;
 }) {
   const update = (id: string, patch: Partial<Player>) => onChange(roster.map((player) => (player.id === id ? { ...player, ...patch } : player)));
   const csvInput = useRef<HTMLInputElement>(null);
@@ -42,10 +48,17 @@ export function RosterEditor({ teamLabel, roster, onChange, onImportCsv, grouped
           </div>
         </td>
       )}
-      <td><input className="roster-num" inputMode="numeric" maxLength={4} placeholder="–" value={player.number} onChange={(event) => update(player.id, { number: event.target.value })} /></td>
-      <td><input className="roster-name" maxLength={60} placeholder="Name" value={player.name} onChange={(event) => update(player.id, { name: event.target.value })} /></td>
-      <td><input className="roster-pass" maxLength={30} placeholder="–" value={player.pass ?? ""} onChange={(event) => update(player.id, { pass: event.target.value })} /></td>
-      <td><input className="roster-birth" maxLength={12} placeholder="TT.MM.JJJJ" value={player.birthdate ?? ""} onChange={(event) => update(player.id, { birthdate: event.target.value })} /></td>
+      {arrangeOnly ? <>
+        <td className="roster-num">{player.number}</td>
+        <td>{player.name}</td>
+        <td className="roster-pass">{player.pass ?? ""}</td>
+        <td className="roster-birth">{player.birthdate ?? ""}</td>
+      </> : <>
+        <td><input className="roster-num" inputMode="numeric" maxLength={4} placeholder="–" value={player.number} onChange={(event) => update(player.id, { number: event.target.value })} /></td>
+        <td><input className="roster-name" maxLength={60} placeholder="Name" value={player.name} onChange={(event) => update(player.id, { name: event.target.value })} /></td>
+        <td><input className="roster-pass" maxLength={30} placeholder="–" value={player.pass ?? ""} onChange={(event) => update(player.id, { pass: event.target.value })} /></td>
+        <td><input className="roster-birth" maxLength={12} placeholder="TT.MM.JJJJ" value={player.birthdate ?? ""} onChange={(event) => update(player.id, { birthdate: event.target.value })} /></td>
+      </>}
       <td><button className="mini-icon danger" aria-label="Spieler entfernen" onClick={() => onChange(roster.filter((entry) => entry.id !== player.id))}><Icon name="trash" /></button></td>
     </tr>
   );
@@ -81,8 +94,8 @@ export function RosterEditor({ teamLabel, roster, onChange, onImportCsv, grouped
       )}
 
       <div className="roster-actions">
-        <button className="text-button" onClick={() => onChange([...roster, { id: uid(), number: "", name: "", pass: "", birthdate: "", status: grouped ? "start" : undefined }])}><Icon name="plus" /> Spieler hinzufügen</button>
-        {onImportCsv && (
+        {!arrangeOnly && <button className="text-button" onClick={() => onChange([...roster, { id: uid(), number: "", name: "", pass: "", birthdate: "", status: grouped ? "start" : undefined }])}><Icon name="plus" /> Spieler hinzufügen</button>}
+        {!arrangeOnly && onImportCsv && (
           <>
             <button className="text-button" onClick={() => csvInput.current?.click()}><Icon name="upload" /> DFBnet-CSV</button>
             <input ref={csvInput} type="file" accept=".csv,text/csv" hidden onChange={(event) => {

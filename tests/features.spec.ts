@@ -102,7 +102,7 @@ test("erfasst ein Vorkommnis ohne Mannschaftsbezug", async ({ page }) => {
   await expect(page.locator(".event-table")).toContainText("Trinkpause wegen Hitze");
 });
 
-test("importiert einen Kader aus einer DFBnet-CSV", async ({ page }) => {
+test("importiert eine Gegner-Aufstellung aus einer DFBnet-CSV", async ({ page }) => {
   await openApp(page);
   await page.getByRole("button", { name: "Mannschaftsaufstellungen" }).click();
 
@@ -113,40 +113,39 @@ test("importiert einen Kader aus einer DFBnet-CSV", async ({ page }) => {
     "Musterkind ;Kim (d) ;03.03.2015;XX;0100-0003;P 03.01.2026 F 03.01.2026;04.01.2026",
   ].join("\n");
 
-  const home = page.locator(".roster-editor > div").first();
-  await home.locator("input[type='file']").setInputFiles({
+  // Only the away (opponent) side keeps a CSV import; the home side comes from "Mein Kader".
+  const away = page.locator(".roster-editor > div").nth(1);
+  await away.locator("input[type='file']").setInputFiles({
     name: "FC_Beispielstadt_II-20260903.csv",
     mimeType: "text/csv",
     buffer: Buffer.from(csv, "utf-8"),
   });
 
-  // frisch importierte Spieler landen unter "Nicht nominiert"
-  const rows = home.locator(".roster-group.group-out .roster-table tbody tr");
+  const rows = away.locator(".roster-group.group-out .roster-table tbody tr");
   await expect(rows).toHaveCount(3);
   await expect(rows.nth(0).locator(".roster-name")).toHaveValue("Max Testspieler");
   await expect(rows.nth(0).locator(".roster-pass")).toHaveValue("0100-0001");
   await expect(rows.nth(1).locator(".roster-name")).toHaveValue("Anna Beispiel");
 
-  // aufstellen: einen Spieler auf "Aufgestellt" setzen
   await rows.nth(0).locator(".status-seg.seg-start").click();
-  await expect(home.locator(".roster-group.group-start .roster-table tbody tr")).toHaveCount(1);
+  await expect(away.locator(".roster-group.group-start .roster-table tbody tr")).toHaveCount(1);
 });
 
 test("wählt im Erfassungsdialog einen Spieler aus der Aufstellung", async ({ page }) => {
   await openApp(page);
-  await page.getByLabel("Name der Heimmannschaft").fill("SV Kader");
+  await page.getByLabel("Name der Gastmannschaft").fill("SV Kader");
   await page.getByRole("button", { name: "Mannschaftsaufstellungen" }).click();
-  const home = page.locator(".roster-editor > div").first();
-  await home.locator("input[type='file']").setInputFiles({
+  const away = page.locator(".roster-editor > div").nth(1);
+  await away.locator("input[type='file']").setInputFiles({
     name: "team.csv",
     mimeType: "text/csv",
     buffer: Buffer.from("Name Künstlername;Vorname Rufname;Geb.\nMeier ;Anna (w) ;01.01.2015\nKern ;Ben (m) ;02.02.2015", "utf-8"),
   });
-  await home.locator(".roster-group.group-out .roster-table tbody tr").first().locator(".status-seg.seg-start").click();
+  await away.locator(".roster-group.group-out .roster-table tbody tr").first().locator(".status-seg.seg-start").click();
   await page.getByRole("button", { name: "Mannschaftsaufstellungen" }).click();
 
   await page.getByRole("button", { name: "Spiel starten" }).click();
-  await page.locator(".team-actions.home").getByRole("button", { name: "Tor Heim", exact: true }).click();
+  await page.locator(".team-actions.away").getByRole("button", { name: "Tor Gast", exact: true }).click();
   await page.locator(".modal select").first().selectOption({ label: "Anna Meier" });
   await page.getByRole("button", { name: "Ereignis speichern" }).click();
   await expect(page.locator(".event-table")).toContainText("Tor SV Kader · Anna Meier");

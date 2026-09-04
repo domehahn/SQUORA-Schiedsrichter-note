@@ -2,7 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./tests",
-  testIgnore: ["**/worker/**"],
+  testIgnore: ["**/worker/**", "**/staging/**"],
   use: {
     baseURL: "http://127.0.0.1:5173",
     trace: "retain-on-failure",

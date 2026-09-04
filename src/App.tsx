@@ -1015,7 +1015,8 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
         >
           <div className="roster-editor">
             <div>
-              <RosterEditor teamLabel={match.homeTeam || "Heim"} roster={match.homeRoster} grouped onChange={(next) => patchMatch({ homeRoster: next })} onImportCsv={importRosterCsv("home")} />
+              <RosterEditor teamLabel={match.homeTeam || "Heim"} roster={match.homeRoster} grouped arrangeOnly onChange={(next) => patchMatch({ homeRoster: next })} />
+              <p className="collapsible-hint">Spieler kommen aus „Mein Kader" (→ Heim-Aufstellung). Hier nur Aufgestellt / Bank / Nicht nominiert.</p>
               <button className="text-button" onClick={saveLineupToHistory}><Icon name="trophy" /> Aufstellung speichern</button>
             </div>
             <div>
@@ -1029,27 +1030,16 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
           id="teams"
           icon="user"
           title="Team-Bibliothek"
-          hint="Vereine samt Kader einmal speichern und geräteübergreifend wiederverwenden."
+          hint="Nur Ansicht: gespeicherte Gegner, Kader-Stände und Aufstellungen – wieder in die Aufstellung ladbar."
           badge={teams.length}
           open={openPanel === "teams"}
           onToggle={() => setOpenPanel((current) => (current === "teams" ? null : "teams"))}
         >
           <TeamLibraryPanel
             teams={teams}
-            onUpdate={(id, patch) => setTeams((list) => list.map((team) => (team.id === id ? { ...team, ...patch, updatedAt: nowIso() } : team)))}
-            onDelete={(id) => { if (window.confirm("Team aus der Bibliothek löschen?")) setTeams((list) => list.filter((team) => team.id !== id)); }}
+            onDelete={(id) => { if (window.confirm("Eintrag aus der Bibliothek löschen?")) setTeams((list) => list.filter((team) => team.id !== id)); }}
             onClear={() => { if (window.confirm("Gesamte Team-Bibliothek löschen?")) setTeams([]); }}
             onApply={applyTeamFromLibrary}
-            onAdd={() => setTeams((list) => mergeTeams([createSavedTeam("Neues Team")], list))}
-            onImportNewTeam={async (file) => {
-              const result = await readDfbnetRoster(file, []);
-              if (result) setTeams((list) => mergeTeams([createSavedTeam(result.teamName || "Neues Team", "", result.roster)], list));
-            }}
-            onImportRoster={async (teamId, file) => {
-              const team = teams.find((entry) => entry.id === teamId);
-              const result = await readDfbnetRoster(file, team?.roster ?? []);
-              if (result) setTeams((list) => list.map((entry) => (entry.id === teamId ? { ...entry, roster: result.roster, name: entry.name || result.teamName, updatedAt: nowIso() } : entry)));
-            }}
           />
         </CollapsibleSection>
 
