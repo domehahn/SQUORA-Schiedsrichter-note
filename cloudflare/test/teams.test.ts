@@ -22,6 +22,16 @@ describe("team (Jugend) scoping", () => {
     expect((await SELF.fetch(`${ORIGIN}/api/v1/clubs/${CLUB_B}/teams`, { headers: { Cookie: cookieA } })).status).toBe(404);
   });
 
+  it("rejects a team-create body with an unexpected field", async () => {
+    const { cookieA } = await seedTwoTenants();
+    const res = await SELF.fetch(`${ORIGIN}/api/v1/clubs/${CLUB_A}/teams`, {
+      method: "POST", headers: jsonHeaders(cookieA),
+      body: JSON.stringify({ name: "D3", ageGroup: "D", role: "club_owner" }),
+    });
+    expect(res.status).toBe(422);
+    expect((await res.json<{ error: { code: string } }>()).error.code).toBe("UNKNOWN_FIELD");
+  });
+
   it("restricts a team-scoped membership to its own team", async () => {
     await seedTwoTenants();
     // downgrade user A to a membership scoped to team D1 only

@@ -1,7 +1,7 @@
 import type { AuthContext } from "../auth/session";
 import { expiredSessionCookie, revokeAllSessions } from "../auth/session";
 import { HttpError, json, readJson, requireSameOrigin } from "../core/http";
-import { objectValue, stringValue } from "../core/validation";
+import { parseBody } from "../core/validation";
 import { purgeClub } from "../services/club-deletion";
 import { writeAudit } from "../services/audit-service";
 
@@ -16,8 +16,8 @@ const CONFIRM_PHRASE = "KONTO LÖSCHEN";
  */
 export async function deleteAccount(request: Request, env: Env, auth: AuthContext, requestId: string): Promise<Response> {
   requireSameOrigin(request);
-  const body = objectValue(await readJson(request, 4096));
-  if (stringValue(body, "confirm", { max: 40 }) !== CONFIRM_PHRASE) {
+  const body = parseBody(await readJson(request, 4096), { confirm: { kind: "string", max: 40 } });
+  if (body.confirm !== CONFIRM_PHRASE) {
     throw new HttpError(422, "CONFIRMATION_MISMATCH", "The confirmation phrase does not match.");
   }
 

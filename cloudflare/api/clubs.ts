@@ -2,7 +2,7 @@ import type { AuthContext } from "../auth/session";
 import { ROLE_PERMISSIONS, type Role } from "../auth/roles";
 import { HttpError, json, readJson, requireSameOrigin } from "../core/http";
 import { newId } from "../core/id";
-import { objectValue, stringValue } from "../core/validation";
+import { parseBody } from "../core/validation";
 import { denyTeamScoped, requireTenantAccess } from "../middleware/tenant";
 import { purgeClub } from "../services/club-deletion";
 import { writeAudit } from "../services/audit-service";
@@ -31,8 +31,7 @@ export async function listClubs(env: Env, auth: AuthContext, requestId: string):
 
 export async function createClub(request: Request, env: Env, auth: AuthContext, requestId: string): Promise<Response> {
   requireSameOrigin(request);
-  const body = objectValue(await readJson(request, 16_384));
-  const name = stringValue(body, "name", { min: 1, max: 120 })!;
+  const name = parseBody(await readJson(request, 16_384), { name: { kind: "string", min: 1, max: 120 } }).name as string;
   const id = newId();
   const now = new Date().toISOString();
   const slug = slugify(name);
@@ -66,8 +65,7 @@ export async function deleteClub(request: Request, env: Env, auth: AuthContext, 
   if (context.role !== "club_owner") throw new HttpError(403, "PERMISSION_DENIED", "Only the club owner can delete the club.");
   const club = await env.DB.prepare("SELECT name FROM clubs WHERE id=?").bind(context.clubId).first<{ name: string }>();
   if (!club) throw new HttpError(404, "NOT_FOUND", "The requested resource was not found.");
-  const body = objectValue(await readJson(request, 4096));
-  const confirm = stringValue(body, "confirm", { max: 120 });
+  const confirm = parseBody(await readJson(request, 4096), { confirm: { kind: "string", max: 120 } }).confirm as string;
   if (confirm !== club.name) throw new HttpError(422, "CONFIRMATION_MISMATCH", "The confirmation does not match the club name.");
   await writeAudit(env.DB, { clubId: context.clubId, userId: auth.userId, action: "CLUB_DELETED", entityType: "club", entityId: context.clubId, metadata: { clubId: context.clubId, name: club.name } });
   const counts = await purgeClub(env.DB, context.clubId);

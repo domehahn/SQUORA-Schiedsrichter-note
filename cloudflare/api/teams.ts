@@ -1,7 +1,7 @@
 import type { AuthContext } from "../auth/session";
 import { json, readJson, requireSameOrigin } from "../core/http";
 import { newId } from "../core/id";
-import { objectValue, stringValue } from "../core/validation";
+import { parseBody } from "../core/validation";
 import { requireTenantAccess } from "../middleware/tenant";
 import { writeAudit } from "../services/audit-service";
 
@@ -29,9 +29,12 @@ export async function listTeams(env: Env, auth: AuthContext, clubId: string, req
 export async function createTeam(request: Request, env: Env, auth: AuthContext, clubId: string, requestId: string): Promise<Response> {
   requireSameOrigin(request);
   const context = await requireTenantAccess(env.DB, auth, clubId, "teams.manage");
-  const body = objectValue(await readJson(request, 8_192));
-  const name = stringValue(body, "name", { min: 1, max: 120 })!;
-  const ageGroup = stringValue(body, "ageGroup", { max: 40, optional: true }) ?? null;
+  const body = parseBody(await readJson(request, 8_192), {
+    name: { kind: "string", min: 1, max: 120 },
+    ageGroup: { kind: "string", max: 40, optional: true },
+  });
+  const name = body.name as string;
+  const ageGroup = (body.ageGroup as string | undefined) ?? null;
   const id = newId();
   const now = new Date().toISOString();
   await env.DB.prepare("INSERT INTO teams (club_id,id,name,age_group,version,created_at,updated_at) VALUES (?,?,?,?,1,?,?)")
