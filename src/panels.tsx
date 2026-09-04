@@ -31,13 +31,13 @@ export function TournamentPanel({ tournaments, archive, onCreate, onUpdate, onDe
           {expanded?.id === tournament.id && (
             <div className="tournament-body">
               <div className="meta-grid">
-                <label><span>Name</span><input value={tournament.name} onChange={(event) => onUpdate(tournament.id, { name: event.target.value })} /></label>
-                <label><span>Datum</span><input type="date" value={tournament.date} onChange={(event) => onUpdate(tournament.id, { date: event.target.value })} /></label>
+                <label><span>Name</span><input value={tournament.name} placeholder=" " onChange={(event) => onUpdate(tournament.id, { name: event.target.value })} /></label>
+                <label><span>Datum</span><input type="date" value={tournament.date} placeholder=" " onChange={(event) => onUpdate(tournament.id, { date: event.target.value })} /></label>
                 <label><span>Jugend</span><select value={tournament.ageGroup} onChange={(event) => {
                   const selected = ageGroups.find((group) => group.value === event.target.value)!;
                   onUpdate(tournament.id, { ageGroup: selected.value, halfDurationMinutes: selected.minutes });
                 }}>{ageGroups.map((group) => <option key={group.value} value={group.value}>{group.label}</option>)}</select></label>
-                <label><span>Minuten je Halbzeit</span><input type="number" min={1} max={60} value={tournament.halfDurationMinutes} onChange={(event) => onUpdate(tournament.id, { halfDurationMinutes: Number(event.target.value) || 1 })} /></label>
+                <label><span>Minuten je Halbzeit</span><input type="number" min={1} max={60} value={tournament.halfDurationMinutes} placeholder=" " onChange={(event) => onUpdate(tournament.id, { halfDurationMinutes: Number(event.target.value) || 1 })} /></label>
                 <label className="wide"><span>Gruppen (mit Komma trennen)</span><input value={tournament.groups.join(", ")} onChange={(event) => {
                   const groups = event.target.value.split(",").map((group) => group.trim()).filter(Boolean);
                   onUpdate(tournament.id, { groups: groups.length ? [...new Set(groups)] : ["A"] });
@@ -299,8 +299,8 @@ export function StatsPanel({ archive, range, onRange, onExport }: {
   return (
     <div className="stats-panel">
       <div className="meta-grid">
-        <label><span>Von</span><input type="date" value={range.from} onChange={(event) => onRange({ from: event.target.value })} /></label>
-        <label><span>Bis</span><input type="date" value={range.to} onChange={(event) => onRange({ to: event.target.value })} /></label>
+        <label><span>Von</span><input type="date" value={range.from} placeholder=" " onChange={(event) => onRange({ from: event.target.value })} /></label>
+        <label><span>Bis</span><input type="date" value={range.to} placeholder=" " onChange={(event) => onRange({ to: event.target.value })} /></label>
       </div>
       <div className="stats-tiles">
         {tiles.map((tile) => (
@@ -402,8 +402,8 @@ export function MetaPanel({ meta, onChange }: { meta: MatchMeta; onChange: (patc
         <label key={field.key} className={field.wide ? "wide" : ""}>
           <span>{field.label}</span>
           {field.area
-            ? <textarea rows={3} maxLength={600} value={meta[field.key]} onChange={(event) => onChange({ [field.key]: event.target.value })} />
-            : <input value={meta[field.key]} maxLength={120} onChange={(event) => onChange({ [field.key]: event.target.value })} />}
+            ? <textarea rows={3} maxLength={600} value={meta[field.key]} placeholder=" " onChange={(event) => onChange({ [field.key]: event.target.value })} />
+            : <input value={meta[field.key]} maxLength={120} placeholder=" " onChange={(event) => onChange({ [field.key]: event.target.value })} />}
         </label>
       ))}
     </div>
@@ -447,8 +447,8 @@ export function SessionExpiredModal({ baseUrl }: { baseUrl: string }) {
         {error && <div className="dialog-warning" role="alert">{error}</div>}
         <p className="collapsible-hint">Dein aktuelles Spiel bleibt gespeichert.</p>
         <form onSubmit={submit}>
-          <label className="player-field"><span>E-Mail-Adresse</span><input type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} required /></label>
-          <label className="player-field"><span>Passwort</span><input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label>
+          <label className="player-field"><span>E-Mail-Adresse</span><input type="email" autoComplete="username" value={email} placeholder=" " onChange={(event) => setEmail(event.target.value)} required /></label>
+          <label className="player-field"><span>Passwort</span><input type="password" autoComplete="current-password" value={password} placeholder=" " onChange={(event) => setPassword(event.target.value)} required /></label>
           <div className="modal-actions">
             <button className="save-button" disabled={busy}><Icon name="check" /> Anmelden</button>
           </div>

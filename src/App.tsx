@@ -843,7 +843,7 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
             {match.phase !== "setup" && <button className="text-button danger-text" onClick={resetMatch}><Icon name="trash" /> Neues Spiel</button>}
           </div>
           <div className="setup-name-row">
-            <label className="date-field"><span>Spieldatum</span><input type="date" value={match.matchDate} onChange={(event) => patchMatch({ matchDate: event.target.value || todayIso() })} /></label>
+            <label className="date-field"><span>Spieldatum</span><input type="date" value={match.matchDate} placeholder=" " onChange={(event) => patchMatch({ matchDate: event.target.value || todayIso() })} /></label>
             <label className="name-field"><span>Spielname (optional)</span><input value={match.matchName} maxLength={60} placeholder=" " onChange={(event) => patchMatch({ matchName: event.target.value })} /></label>
           </div>
           <p className="collapsible-hint">Praktisch bei mehreren Begegnungen am selben Tag, z. B. Funino-Runden.</p>
@@ -852,7 +852,7 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
               const selected = ageGroups.find((group) => group.value === event.target.value)!;
               patchMatch({ ageGroup: selected.value, halfDurationMinutes: selected.minutes });
             }}>{ageGroups.map((group) => <option key={group.value} value={group.value}>{group.label}</option>)}</select></label>
-            <label><span>Minuten je Halbzeit</span><div className="input-suffix"><input type="number" min="1" max="60" value={match.halfDurationMinutes} disabled={match.phase !== "setup" || !EDITABLE_DURATION_GROUPS.has(match.ageGroup)} onChange={(event) => patchMatch({ halfDurationMinutes: Number(event.target.value) || 1 })} /><em>min</em></div></label>
+            <label><span>Minuten je Halbzeit</span><div className="input-suffix"><input type="number" min="1" max="60" value={match.halfDurationMinutes} placeholder=" " disabled={match.phase !== "setup" || !EDITABLE_DURATION_GROUPS.has(match.ageGroup)} onChange={(event) => patchMatch({ halfDurationMinutes: Number(event.target.value) || 1 })} /><em>min</em></div></label>
             <div className="rule-hint"><Icon name="clock" /><span><strong>2 × {match.halfDurationMinutes} Minuten</strong><small>Nachspielzeit läuft automatisch weiter.</small></span></div>
           </div>
 
@@ -862,7 +862,7 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
               <span>K.-o.-Spiel (Verlängerung &amp; Elfmeterschießen bei Gleichstand)</span>
             </label>
             {match.knockout && (
-              <label className="inline-num"><span>Verlängerung je Halbzeit</span><input type="number" min={1} max={30} value={match.extraDurationMinutes} disabled={match.phase !== "setup" && match.phase !== "secondHalf"} onChange={(event) => patchMatch({ extraDurationMinutes: Number(event.target.value) || 1 })} /><em>min</em></label>
+              <label className="inline-num"><span>Verlängerung je Halbzeit</span><input type="number" min={1} max={30} value={match.extraDurationMinutes} placeholder=" " disabled={match.phase !== "setup" && match.phase !== "secondHalf"} onChange={(event) => patchMatch({ extraDurationMinutes: Number(event.target.value) || 1 })} /><em>min</em></label>
             )}
           </div>
 

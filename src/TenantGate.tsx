@@ -289,13 +289,13 @@ export function TenantGate({ rememberedId, onUnlock }: Props) {
           <h1>{clubName} · {team?.name}</h1>
           {cacheExists ? <>
             <p className="tenant-hint">Auf diesem Gerät liegen verschlüsselte Offline-Daten. Gib die Geräte-Passphrase ein, um sie zu entsperren.</p>
-            <label><span>Geräte-Passphrase</span><input type="password" autoComplete="current-password" value={pass} onChange={(event) => setPass(event.target.value)} autoFocus /></label>
+            <label><span>Geräte-Passphrase</span><input type="password" autoComplete="current-password" value={pass} onChange={(event) => setPass(event.target.value)} placeholder=" " autoFocus /></label>
             {error && <div className="tenant-error" role="alert">{error}</div>}
             <button className="tenant-primary" disabled={busy}><Icon name="check" /> Entsperren &amp; öffnen</button>
           </> : wantOffline ? <>
             <p className="tenant-hint">Lege eine Passphrase für diesen Browser fest. Sie verschlüsselt ausschließlich die lokal gespeicherten Spieldaten und wird nie übertragen.</p>
-            <label><span>Passphrase (mind. {MIN_PASSPHRASE} Zeichen)</span><input type="password" autoComplete="new-password" value={pass} onChange={(event) => setPass(event.target.value)} autoFocus /></label>
-            <label><span>Passphrase wiederholen</span><input type="password" autoComplete="new-password" value={pass2} onChange={(event) => setPass2(event.target.value)} /></label>
+            <label><span>Passphrase (mind. {MIN_PASSPHRASE} Zeichen)</span><input type="password" autoComplete="new-password" value={pass} onChange={(event) => setPass(event.target.value)} placeholder=" " autoFocus /></label>
+            <label><span>Passphrase wiederholen</span><input type="password" autoComplete="new-password" value={pass2} onChange={(event) => setPass2(event.target.value)} placeholder=" " /></label>
             {error && <div className="tenant-error" role="alert">{error}</div>}
             <button className="tenant-primary" disabled={busy}><Icon name="check" /> Offline-Schutz einrichten &amp; öffnen</button>
             <button type="button" className="tenant-link" onClick={() => { setWantOffline(false); setError(null); }}>Doch nur online arbeiten</button>

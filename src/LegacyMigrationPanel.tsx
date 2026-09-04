@@ -82,7 +82,7 @@ export function LegacyMigrationPanel({ club, team }: { club: TenantMeta; team: T
       <h2>Alte Vereinsdaten gefunden</h2>
       <p className="tenant-hint">Ordne eine alte, verschlüsselte Datenablage ausdrücklich dieser Mannschaft zu.</p>
       <label><span>Alter Verein</span><select value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>{sources.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}</select></label>
-      <label><span>Alte Vereins-Passphrase</span><input type="password" autoComplete="off" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} /></label>
+      <label><span>Alte Vereins-Passphrase</span><input type="password" autoComplete="off" value={passphrase} placeholder=" " onChange={(event) => setPassphrase(event.target.value)} /></label>
       {message && <div className="tenant-error" role="status">{message}</div>}
       <button type="button" className="tenant-link" disabled={busy || !selected || !passphrase} onClick={() => void migrate()}><Icon name="upload" /> Kontrolliert migrieren</button>
     </section>
