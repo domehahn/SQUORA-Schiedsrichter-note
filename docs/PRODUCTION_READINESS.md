@@ -16,7 +16,7 @@ checklist.
 | 4 | Tenant-isolation tests as merge gate | 🟢 | `cloudflare/test/{tenant,matches,teams}.test.ts` + `security/bola.test.ts` — foreign club/team/match/export/import → 404; `test:worker` CI job |
 | 5 | RBAC tested | 🟢 | `security/rbac.test.ts`: viewer read-only, referee cannot delete/manage/import/export, only owner deletes club |
 | 6 | Optimistic locking, no silent last-write-wins | 🟢 | `version` columns + `team_sync_versions`; `security/concurrency.test.ts` |
-| 7 | D1 migrations tested + applied | 🟢 | `applyD1Migrations` covers `0001–0018`; applied to real EU D1 (dev/staging/production); prod deploy 2026-09-04 applied 0017+0018, migration list clean |
+| 7 | D1 migrations tested + applied | 🟢 | `applyD1Migrations` covers `0001–0019`; applied to real EU D1 (dev/staging/production); prod deploy 2026-09-04 applied 0017+0018, migration list clean |
 | 8 | Separate dev / staging / production | 🟢 | `wrangler.jsonc` env split; three real EU D1 databases; per-env rate-limiter namespaces; `env.development` pins `routes:[]` |
 | 9 | Encrypted local storage; keys memory-only | 🟢 | `encryptedCache.ts`; PBKDF2 600k / AES-256-GCM; no key in `localStorage`/logs |
 | 10 | CSP without `unsafe-inline`, HSTS, frame protection | 🟢 | `core/http.ts` `SECURITY_HEADERS` + CSP |

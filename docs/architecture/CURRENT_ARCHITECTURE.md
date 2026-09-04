@@ -133,7 +133,7 @@ structured line.
 
 ## Quality baseline
 
-- Unit: 36 · Worker (Miniflare + D1 `0001–0018`): 85 · e2e (Playwright): 19
+- Unit: 36 · Worker (Miniflare + D1 `0001–0019`): 86 · e2e (Playwright): 19
   (+1 skipped) · real-Worker e2e: 5 · build + lint + `npm audit --audit-level=high`:
   clean.
 - CI: `.github/workflows/ci.yml` (quality, e2e, e2e-worker, security, CodeQL;

@@ -37,6 +37,20 @@ describe("team roster (players) CRUD", () => {
     expect((await SELF.fetch(url(CLUB_A, TEAM_A), { headers: { Cookie: cookieA } })).status).toBe(200);
   });
 
+  it("stores first / last name separately and derives the combined name", async () => {
+    const { cookieA } = await seedTwoTenants();
+    const created = await SELF.fetch(url(CLUB_A, TEAM_A), { method: "POST", headers: jsonHeaders(cookieA), body: JSON.stringify({ firstName: "Max", lastName: "Testspieler", shirtNumber: "7" }) });
+    expect(created.status).toBe(201);
+    const { player } = await created.json<{ player: { id: string; version: number; firstName: string; lastName: string; name: string } }>();
+    expect(player).toMatchObject({ firstName: "Max", lastName: "Testspieler", name: "Max Testspieler" });
+
+    const patched = await SELF.fetch(url(CLUB_A, TEAM_A, `/${player.id}`), { method: "PATCH", headers: jsonHeaders(cookieA), body: JSON.stringify({ version: player.version, firstName: "Max", lastName: "Beispiel" }) });
+    expect((await patched.json<{ player: { name: string } }>()).player.name).toBe("Max Beispiel");
+
+    const empty = await SELF.fetch(url(CLUB_A, TEAM_A, `/${player.id}`), { method: "PATCH", headers: jsonHeaders(cookieA), body: JSON.stringify({ version: 2, firstName: "", lastName: "" }) });
+    expect(empty.status).toBe(422);
+  });
+
   it("stores and updates pass number + birthdate, rejecting a malformed birthdate", async () => {
     const { cookieA } = await seedTwoTenants();
     const created = await SELF.fetch(url(CLUB_A, TEAM_A), { method: "POST", headers: jsonHeaders(cookieA), body: JSON.stringify({ name: "Max Testspieler", shirtNumber: "7", passNumber: "0100-0001", birthdate: "01.01.2014" }) });

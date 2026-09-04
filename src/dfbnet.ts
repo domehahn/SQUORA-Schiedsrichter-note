@@ -15,6 +15,7 @@ export interface DfbnetImport {
 export interface ExternalRosterEntry {
   name: string;
   firstName: string;
+  lastName: string;
   shirtNumber: string;
   externalId: string;
   passNumber: string;
@@ -36,6 +37,7 @@ export function parseDfbnetExternal(csv: string, filename = "import.csv"): { tea
     players: external.players.map((player) => ({
       name: player.name,
       firstName: player.firstName ?? "",
+      lastName: player.lastName ?? "",
       shirtNumber: player.shirtNumber ?? "",
       externalId: player.externalId ?? "",
       passNumber: player.pass ?? "",

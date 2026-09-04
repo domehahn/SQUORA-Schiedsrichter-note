@@ -149,6 +149,8 @@ export async function createTeamUnit(clubId: string, name: string, ageGroup: str
 export interface RosterPlayer {
   id: string;
   externalId: string | null;
+  firstName: string | null;
+  lastName: string | null;
   name: string;
   shirtNumber: string | null;
   passNumber: string | null;
@@ -182,22 +184,28 @@ export async function fetchPlayers(clubId: string, teamId: string): Promise<Rost
 }
 
 export interface PlayerInput {
-  name: string;
+  firstName?: string;
+  lastName?: string;
+  name?: string;
   shirtNumber?: string;
   passNumber?: string;
   birthdate?: string;
 }
 
+const playerBody = (input: PlayerInput): Record<string, unknown> => ({
+  ...(input.firstName !== undefined ? { firstName: input.firstName } : {}),
+  ...(input.lastName !== undefined ? { lastName: input.lastName } : {}),
+  ...(input.name !== undefined ? { name: input.name } : {}),
+  ...(input.shirtNumber !== undefined ? { shirtNumber: input.shirtNumber } : {}),
+  ...(input.passNumber !== undefined ? { passNumber: input.passNumber } : {}),
+  ...(input.birthdate !== undefined ? { birthdate: input.birthdate } : {}),
+});
+
 export async function createPlayer(clubId: string, teamId: string, input: PlayerInput): Promise<RosterPlayer | null> {
   try {
     const response = await fetch(playersUrl(clubId, teamId), {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: input.name,
-        ...(input.shirtNumber ? { shirtNumber: input.shirtNumber } : {}),
-        ...(input.passNumber ? { passNumber: input.passNumber } : {}),
-        ...(input.birthdate ? { birthdate: input.birthdate } : {}),
-      }),
+      body: JSON.stringify(playerBody(input)),
     });
     if (!response.ok) return null;
     const body = await response.json() as { player?: unknown };
@@ -209,12 +217,7 @@ export async function updatePlayer(clubId: string, teamId: string, id: string, i
   try {
     const response = await fetch(`${playersUrl(clubId, teamId)}/${enc(id)}`, {
       method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        version: input.version, name: input.name,
-        ...(input.shirtNumber !== undefined ? { shirtNumber: input.shirtNumber } : {}),
-        ...(input.passNumber !== undefined ? { passNumber: input.passNumber } : {}),
-        ...(input.birthdate !== undefined ? { birthdate: input.birthdate } : {}),
-      }),
+      body: JSON.stringify({ version: input.version, ...playerBody(input) }),
     });
     if (response.status === 409) return "conflict";
     if (!response.ok) return null;
@@ -247,7 +250,7 @@ export async function fetchDfbnetImports(clubId: string, teamId: string): Promis
 
 export async function pushDfbnetRoster(
   clubId: string, teamId: string,
-  input: { filename: string; players: { name: string; firstName?: string; shirtNumber?: string; externalId?: string; passNumber?: string; birthdate?: string }[]; mode: "merge" | "replace" },
+  input: { filename: string; players: { name: string; firstName?: string; lastName?: string; shirtNumber?: string; externalId?: string; passNumber?: string; birthdate?: string }[]; mode: "merge" | "replace" },
 ): Promise<{ ok: boolean; recordCount: number }> {
   try {
     const response = await fetch(importsUrl(clubId, teamId), {

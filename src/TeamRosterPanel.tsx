@@ -49,18 +49,29 @@ export function TeamRosterPanel({ clubId, teamId, teamName, onCopyToLibrary, onC
 
   const flash = (message: string) => { setNotice(message); window.setTimeout(() => setNotice(null), 3000); };
 
-  const saveField = async (player: RosterPlayer, patch: Partial<Pick<PlayerInput, "name" | "shirtNumber" | "passNumber" | "birthdate">>) => {
-    const next: Required<Pick<PlayerInput, "name" | "shirtNumber" | "passNumber" | "birthdate">> = {
-      name: (patch.name ?? player.name).trim(),
+  /** Split view of a player's name: prefer the stored parts, else derive from the legacy combined `name`. */
+  const nameParts = (player: RosterPlayer): { firstName: string; lastName: string } => {
+    if (player.firstName !== null || player.lastName !== null) return { firstName: player.firstName ?? "", lastName: player.lastName ?? "" };
+    const full = (player.name ?? "").trim();
+    const cut = full.lastIndexOf(" ");
+    return cut > 0 ? { firstName: full.slice(0, cut), lastName: full.slice(cut + 1) } : { firstName: "", lastName: full };
+  };
+
+  const saveField = async (player: RosterPlayer, patch: Partial<Pick<PlayerInput, "firstName" | "lastName" | "shirtNumber" | "passNumber" | "birthdate">>) => {
+    const base = nameParts(player);
+    const next = {
+      firstName: (patch.firstName ?? base.firstName).trim(),
+      lastName: (patch.lastName ?? base.lastName).trim(),
       shirtNumber: (patch.shirtNumber ?? player.shirtNumber ?? "").trim(),
       passNumber: (patch.passNumber ?? player.passNumber ?? "").trim(),
       birthdate: (patch.birthdate ?? player.birthdate ?? "").trim(),
     };
-    const unchanged = next.name === player.name
+    if (!next.firstName && !next.lastName) { setError("Vor- oder Nachname ist erforderlich."); return; }
+    const unchanged = next.firstName === base.firstName && next.lastName === base.lastName
       && next.shirtNumber === (player.shirtNumber ?? "")
       && next.passNumber === (player.passNumber ?? "")
       && next.birthdate === (player.birthdate ?? "");
-    if (!next.name || unchanged) return;
+    if (unchanged) return;
     setError(null);
     const result = await updatePlayer(clubId, teamId, player.id, { version: player.version, ...next });
     if (result === "conflict") { flash("Von einem anderen Gerät geändert – neu geladen."); await reload(); return; }
@@ -71,10 +82,10 @@ export function TeamRosterPanel({ clubId, teamId, teamName, onCopyToLibrary, onC
   const addPlayer = async () => {
     setBusy(true);
     setError(null);
-    const created = await createPlayer(clubId, teamId, { name: "Neuer Spieler" });
+    const created = await createPlayer(clubId, teamId, { lastName: "Neuer Spieler" });
     setBusy(false);
     if (!created) { setError("Spieler konnte nicht angelegt werden."); return; }
-    setPlayers((list) => [...list, created].sort((a, b) => a.name.localeCompare(b.name)));
+    setPlayers((list) => [...list, created].sort((a, b) => (a.lastName ?? a.name).localeCompare(b.lastName ?? b.name)));
   };
 
   const removePlayer = async (player: RosterPlayer) => {
@@ -126,18 +137,22 @@ export function TeamRosterPanel({ clubId, teamId, teamName, onCopyToLibrary, onC
       {loading ? <p className="collapsible-hint">Lade Kader …</p> : <>
         <div className="table-scroll">
           <table className="roster-table">
-            <thead><tr><th>Nr.</th><th>Name</th><th>Passnr.</th><th>Geb. (TT.MM.JJJJ)</th><th aria-label="Entfernen" /></tr></thead>
+            <thead><tr><th>Nr.</th><th>Vorname</th><th>Nachname</th><th>Passnr.</th><th>Geb. (TT.MM.JJJJ)</th><th aria-label="Entfernen" /></tr></thead>
             <tbody>
-              {players.length === 0 && <tr><td colSpan={5}>Noch keine Spieler. Lege welche an oder importiere eine DFBnet-CSV.</td></tr>}
-              {players.map((player) => (
+              {players.length === 0 && <tr><td colSpan={6}>Noch keine Spieler. Lege welche an oder importiere eine DFBnet-CSV.</td></tr>}
+              {players.map((player) => {
+                const parts = nameParts(player);
+                return (
                 <tr key={player.id}>
                   <td><input className="roster-num" inputMode="numeric" maxLength={8} defaultValue={player.shirtNumber ?? ""} onBlur={(event) => void saveField(player, { shirtNumber: event.target.value })} /></td>
-                  <td><input className="roster-name" maxLength={120} defaultValue={player.name} onBlur={(event) => void saveField(player, { name: event.target.value })} /></td>
+                  <td><input className="roster-name" maxLength={80} defaultValue={parts.firstName} onBlur={(event) => void saveField(player, { firstName: event.target.value })} /></td>
+                  <td><input className="roster-name" maxLength={80} defaultValue={parts.lastName} onBlur={(event) => void saveField(player, { lastName: event.target.value })} /></td>
                   <td><input className="roster-pass" maxLength={40} defaultValue={player.passNumber ?? ""} onBlur={(event) => void saveField(player, { passNumber: event.target.value })} /></td>
                   <td><input className="roster-birth" inputMode="numeric" maxLength={12} placeholder="TT.MM.JJJJ" defaultValue={player.birthdate ?? ""} onBlur={(event) => void saveField(player, { birthdate: event.target.value })} /></td>
                   <td><button className="mini-icon danger" aria-label={`${player.name} entfernen`} onClick={() => void removePlayer(player)}><Icon name="trash" /></button></td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

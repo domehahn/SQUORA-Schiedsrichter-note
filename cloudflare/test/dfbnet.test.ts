@@ -5,8 +5,8 @@ import { CLUB_A, CLUB_B, TEAM_A, TEAM_A2, TEAM_B, USER_A, ORIGIN, jsonHeaders, m
 const roster = (extra: Record<string, unknown>[] = []) => ({
   filename: "synthetic-roster.csv",
   players: [
-    { name: "Testspieler A", firstName: "Max", shirtNumber: "7", externalId: "SYN-1", birthdate: "01.01.2014", passNumber: "0100-0001", nationality: "XX" },
-    { name: "Testspieler B", firstName: "Anna", shirtNumber: "9", externalId: "SYN-2" },
+    { name: "Testspieler A", firstName: "Max", lastName: "Testspieler A", shirtNumber: "7", externalId: "SYN-1", birthdate: "01.01.2014", passNumber: "0100-0001", nationality: "XX" },
+    { name: "Testspieler B", firstName: "Anna", lastName: "Testspieler B", shirtNumber: "9", externalId: "SYN-2" },
     ...extra,
   ],
 });
@@ -28,10 +28,10 @@ describe("DFBnet staged import", () => {
 
     const confirm = await SELF.fetch(url(CLUB_A, TEAM_A, `/${importId}/confirm`), { method: "POST", headers: jsonHeaders(cookieA), body: JSON.stringify(roster()) });
     expect(confirm.status).toBe(200);
-    const players = await env.DB.prepare("SELECT name,shirt_number AS shirt,pass_number AS pass,birthdate FROM players WHERE club_id=? AND team_id=? ORDER BY name").bind(CLUB_A, TEAM_A).all<{ name: string; shirt: string; pass: string | null; birthdate: string | null }>();
+    const players = await env.DB.prepare("SELECT name,first_name AS firstName,last_name AS lastName,shirt_number AS shirt,pass_number AS pass,birthdate FROM players WHERE club_id=? AND team_id=? ORDER BY name").bind(CLUB_A, TEAM_A).all<{ name: string; firstName: string | null; lastName: string | null; shirt: string; pass: string | null; birthdate: string | null }>();
     expect(players.results.map((p) => p.name)).toEqual(["Testspieler A", "Testspieler B"]);
-    expect(players.results[0]).toMatchObject({ pass: "0100-0001", birthdate: "01.01.2014" });
-    expect(players.results[1]).toMatchObject({ pass: null, birthdate: null });
+    expect(players.results[0]).toMatchObject({ firstName: "Max", lastName: "Testspieler A", pass: "0100-0001", birthdate: "01.01.2014" });
+    expect(players.results[1]).toMatchObject({ firstName: "Anna", lastName: "Testspieler B", pass: null, birthdate: null });
     const row = await env.DB.prepare("SELECT status FROM dfbnet_imports WHERE club_id=? AND id=?").bind(CLUB_A, importId).first<{ status: string }>();
     expect(row?.status).toBe("completed");
     expect((await env.DB.prepare("SELECT count(*) AS n FROM audit_log WHERE action='DFBNET_IMPORT_COMPLETED'").first<{ n: number }>())?.n).toBe(1);

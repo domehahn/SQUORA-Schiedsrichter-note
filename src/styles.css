@@ -209,7 +209,7 @@ input:disabled, select:disabled { color: #6a7687; background: #f4f6f9; }
 .roster-col .text-button { padding: 8px 6px; }
 .roster-actions { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 6px; }
 
-.roster-table { width: 100%; min-width: 520px; border-collapse: collapse; font-size: 12px; }
+.roster-table { width: 100%; min-width: 620px; border-collapse: collapse; font-size: 12px; }
 .roster-table th { text-align: left; padding: 6px 8px; background: #f7fafd; color: #64748b; font-size: 9px; text-transform: uppercase; letter-spacing: .08em; font-weight: 800; border-bottom: 1px solid #e2e8f1; white-space: nowrap; }
 .roster-table td { padding: 4px 6px; border-bottom: 1px solid #eef2f6; }
 .roster-table input, .roster-table select { width: 100%; min-height: 36px; font-size: 13px; padding: 6px 8px; }
