@@ -32,6 +32,21 @@ describe("team (Jugend) scoping", () => {
     expect((await res.json<{ error: { code: string } }>()).error.code).toBe("UNKNOWN_FIELD");
   });
 
+  it("denies a team-scoped referee_manager from creating a new club-wide team, even though the role carries teams.manage", async () => {
+    await seedTwoTenants();
+    // downgrade user A to a team-scoped referee_manager — the role that carries
+    // teams.manage, so only the team-scope check can be stopping this.
+    await env.DB.prepare("UPDATE memberships SET team_id=?, role='referee_manager' WHERE club_id=? AND user_id=?").bind(TEAM_A, CLUB_A, USER_A).run();
+    const cookie = await authCookie(USER_A);
+    const before = await env.DB.prepare("SELECT count(*) AS n FROM teams WHERE club_id=?").bind(CLUB_A).first<{ n: number }>();
+    const res = await SELF.fetch(`${ORIGIN}/api/v1/clubs/${CLUB_A}/teams`, {
+      method: "POST", headers: jsonHeaders(cookie), body: JSON.stringify({ name: "Neue Mannschaft", ageGroup: "D" }),
+    });
+    expect(res.status).toBe(404);
+    const after = await env.DB.prepare("SELECT count(*) AS n FROM teams WHERE club_id=?").bind(CLUB_A).first<{ n: number }>();
+    expect(after?.n).toBe(before?.n);
+  });
+
   it("restricts a team-scoped membership to its own team", async () => {
     await seedTwoTenants();
     // downgrade user A to a membership scoped to team D1 only

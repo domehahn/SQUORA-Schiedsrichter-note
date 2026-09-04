@@ -2,7 +2,7 @@ import type { AuthContext } from "../auth/session";
 import { json, readJson, requireSameOrigin } from "../core/http";
 import { newId } from "../core/id";
 import { parseBody } from "../core/validation";
-import { requireTenantAccess } from "../middleware/tenant";
+import { denyTeamScoped, requireTenantAccess } from "../middleware/tenant";
 import { writeAudit } from "../services/audit-service";
 
 interface TeamRow {
@@ -29,6 +29,10 @@ export async function listTeams(env: Env, auth: AuthContext, clubId: string, req
 export async function createTeam(request: Request, env: Env, auth: AuthContext, clubId: string, requestId: string): Promise<Response> {
   requireSameOrigin(request);
   const context = await requireTenantAccess(env.DB, auth, clubId, "teams.manage");
+  // Creating a team is a club-wide operation (it adds a whole new scope to the
+  // club) — a membership limited to one existing team must not be able to
+  // spin up another, even if its role happens to carry teams.manage.
+  denyTeamScoped(context);
   const body = parseBody(await readJson(request, 8_192), {
     name: { kind: "string", min: 1, max: 120 },
     ageGroup: { kind: "string", max: 40, optional: true },
