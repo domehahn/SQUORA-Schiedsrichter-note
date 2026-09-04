@@ -162,19 +162,18 @@ test("trennt Vereinsdaten: neuer Verein sieht das Archiv des anderen nicht", asy
   await page.getByRole("button", { name: "Speichern", exact: true }).click();
   await expect(page.locator(".archive-table")).toContainText("Verein-A-Team");
 
-  // Verein sperren -> Gate -> zweiten Verein anlegen
+  // Mannschaft sperren -> Gate -> zweiten Verein anlegen
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: /Testverein/ }).click();
+  await page.getByRole("button", { name: /Verein \/ Mannschaft wechseln|Anderer Verein/ }).click();
   await page.getByRole("button", { name: /Weiteren Verein anlegen/ }).click();
   await page.getByLabel("Vereinsname").fill("Zweiter Verein");
-  const password = page.locator(".tenant-card input[type='password']");
-  await password.nth(0).fill("anderes-geheimnis");
-  await password.nth(1).fill("anderes-geheimnis");
   await page.getByRole("button", { name: /Verein anlegen/ }).click();
 
   // frischer Verein -> erste Mannschaft anlegen
   await page.getByLabel("Mannschaft").fill("E1");
   await page.getByRole("button", { name: /Anlegen & öffnen/ }).click();
+  await page.getByRole("button", { name: "Öffnen", exact: true }).click();
 
   await expect(page.locator("#setup-title")).toBeVisible();
   await expect(page.getByRole("button", { name: /Zweiter Verein · E1/ })).toBeVisible();

@@ -26,8 +26,12 @@ export function isTeamUnit(value: unknown): value is TeamUnit {
   return Boolean(team && typeof team.id === "string" && typeof team.name === "string");
 }
 
-/** Stable id for the per-(club, team) encrypted cache + remembered-selection storage. */
-export function scopeKey(clubId: string, teamId: string): string {
-  return `${clubId}:${teamId}`;
+/**
+ * Stable id for the encrypted offline cache and remembered-selection storage.
+ * Bound to user + club + team so a second account in the same browser can never
+ * pick up the first account's cache.
+ */
+export function scopeKey(userId: string, clubId: string, teamId: string): string {
+  return `${userId}:${clubId}:${teamId}`;
 }
 

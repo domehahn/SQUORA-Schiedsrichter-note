@@ -4,15 +4,7 @@ import { apiStatus, login, passGate } from "./helpers";
 
 test("a signed-in referee cannot reach another club through the real API", async ({ page }) => {
   await login(page, E2E.userA.email, E2E.userA.password);
-  await page.waitForSelector(".tenant-card, #setup-title");
-  if (await page.getByLabel("Vereinsname").count()) {
-    await passGate(page, "Worker E2E Isolation Club");
-  } else if (await page.locator(".tenant-card").count()) {
-    await page.locator(".tenant-card input[type='password']").first().fill("worker-e2e-passphrase");
-    await page.getByRole("button", { name: "Weiter", exact: true }).click();
-    await page.locator(".tenant-card select").selectOption({ index: 1 });
-    await page.getByRole("button", { name: "Öffnen", exact: true }).click();
-  }
+  await passGate(page, "Worker E2E Isolation Club");
   await expect(page.locator("#setup-title")).toBeVisible();
 
   // Foreign club B (seeded for user B) is invisible to A: 404, never 403.

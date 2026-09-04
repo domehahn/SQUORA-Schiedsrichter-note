@@ -21,15 +21,12 @@ test("rejects wrong credentials, then signs in through the real Worker", async (
 
 test("keeps the session across a reload and clears it on logout", async ({ page }) => {
   await login(page, E2E.userA.email, E2E.userA.password);
-  // club + team already exist from the previous test -> gate goes straight to select
-  await page.waitForSelector(".tenant-card, #setup-title");
-  if (await page.locator(".tenant-card").count()) {
-    await page.locator(".tenant-card input[type='password']").first().fill("worker-e2e-passphrase");
-    await page.getByRole("button", { name: "Weiter", exact: true }).click();
-    await page.locator(".tenant-card select").selectOption({ index: 1 });
-    await page.getByRole("button", { name: "Öffnen", exact: true }).click();
-  }
-  await expect(page.locator("#setup-title")).toBeVisible();
+  // club + team already exist from the previous test -> auto-selected, just open
+  const open = page.getByRole("button", { name: "Öffnen", exact: true });
+  const app = page.locator("#setup-title");
+  await expect(open.or(app).first()).toBeVisible();
+  if (await open.count()) await open.click();
+  await expect(app).toBeVisible();
 
   await page.reload();
   expect(await apiStatus(page, "/api/v1/me")).toBe(200);

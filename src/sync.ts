@@ -1,7 +1,7 @@
 import { normalizeMatch, type MatchState, type SavedMatch } from "./match";
 import { sanitizeTournaments, type Tournament } from "./tournament";
 import { sanitizeTeams, type SavedTeam } from "./teams";
-import { isTeamUnit, isTenantMeta, scopeKey, type TeamUnit, type TenantMeta } from "./tenant";
+import { isTeamUnit, isTenantMeta, type TeamUnit, type TenantMeta } from "./tenant";
 
 const BASE = import.meta.env.BASE_URL ?? "/";
 const API = `${BASE}api/v1`;
@@ -63,6 +63,17 @@ export function applyDeletions(archive: SavedMatch[], deletedIds: Iterable<strin
   return archive.filter((entry) => !removed.has(entry.state.id));
 }
 
+export async function fetchMe(): Promise<{ userId: string; displayName: string } | null> {
+  try {
+    const response = await fetch(`${API}/me`, { headers: { Accept: "application/json" } });
+    if (!response.ok) return null;
+    const body = await response.json() as { user?: { id?: unknown; displayName?: unknown } };
+    return typeof body.user?.id === "string"
+      ? { userId: body.user.id, displayName: typeof body.user.displayName === "string" ? body.user.displayName : "" }
+      : null;
+  } catch { return null; }
+}
+
 export async function fetchTenantIndex(): Promise<TenantMeta[] | null> {
   try {
     const response = await fetch(`${API}/clubs`, { headers: { Accept: "application/json" } });
@@ -101,8 +112,8 @@ export async function createTeamUnit(clubId: string, name: string, ageGroup: str
 
 export type TenantFetch = { ok: true; data: CloudData } | { ok: false; reason: "empty" | "offline" | "decrypt" | "unauthorized" };
 
-export async function fetchTenantData(clubId: string, teamId: string, _key?: CryptoKey): Promise<TenantFetch> {
-  const scope = scopeKey(clubId, teamId);
+export async function fetchTenantData(clubId: string, teamId: string, _key?: CryptoKey | null): Promise<TenantFetch> {
+  const scope = `${clubId}:${teamId}`;
   try {
     const response = await fetch(stateUrl(clubId, teamId), { headers: { Accept: "application/json" } });
     if (response.status === 401 || response.status === 403 || response.status === 404) return { ok: false, reason: "unauthorized" };
@@ -113,8 +124,8 @@ export async function fetchTenantData(clubId: string, teamId: string, _key?: Cry
   } catch { return { ok: false, reason: "offline" }; }
 }
 
-export async function pushTenantData(clubId: string, teamId: string, _key: CryptoKey, data: CloudData): Promise<boolean> {
-  const scope = scopeKey(clubId, teamId);
+export async function pushTenantData(clubId: string, teamId: string, _key: CryptoKey | null, data: CloudData): Promise<boolean> {
+  const scope = `${clubId}:${teamId}`;
   try {
     const response = await fetch(stateUrl(clubId, teamId), {
       method: "PUT",

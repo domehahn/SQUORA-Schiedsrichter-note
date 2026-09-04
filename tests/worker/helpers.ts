@@ -8,19 +8,29 @@ export async function login(page: Page, email: string, password: string): Promis
   await page.waitForSelector(".tenant-card, #setup-title");
 }
 
-/** First-run gate: create the club, then the first team. */
-export async function passGate(page: Page, club: string, team = "D1", passphrase = "worker-e2e-passphrase"): Promise<void> {
-  if (await page.locator("#setup-title").count()) return;
-  await page.getByLabel("Vereinsname").fill(club);
-  const pw = page.locator(".tenant-card input[type='password']");
-  await pw.nth(0).fill(passphrase);
-  await pw.nth(1).fill(passphrase);
-  await page.getByRole("button", { name: /Verein anlegen/ }).click();
+/** First-run gate: create the club, then the first team, then open online. */
+export async function passGate(page: Page, club: string, team = "D1"): Promise<void> {
+  const clubField = page.getByLabel("Vereinsname");
+  const teamField = page.getByLabel("Mannschaft");
+  const open = page.getByRole("button", { name: "Öffnen", exact: true });
+  const app = page.locator("#setup-title");
+  if (await app.count()) return;
 
-  await page.waitForSelector(".tenant-card :text('Mannschaft')");
-  await page.getByLabel("Mannschaft").fill(team);
-  await page.getByRole("button", { name: /Anlegen & öffnen/ }).click();
-  await expect(page.locator("#setup-title")).toBeVisible();
+  await expect(clubField.or(teamField).or(open).or(app).first()).toBeVisible();
+  if (await clubField.count()) {
+    await clubField.fill(club);
+    await page.getByRole("button", { name: /Verein anlegen/ }).click();
+  }
+
+  await expect(teamField.or(open).or(app).first()).toBeVisible();
+  if (await teamField.count()) {
+    await teamField.fill(team);
+    await page.getByRole("button", { name: /Anlegen & öffnen/ }).click();
+  }
+
+  await expect(open.or(app).first()).toBeVisible();
+  if (await open.count()) await open.click();
+  await expect(app).toBeVisible();
 }
 
 /** Runs fetch() inside the page so the real session cookie is attached. */

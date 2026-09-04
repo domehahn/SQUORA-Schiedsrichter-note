@@ -2,7 +2,6 @@ import { expect, type Page } from "@playwright/test";
 
 export const TEST_VEREIN = "Testverein";
 export const TEST_TEAM = "D1";
-export const TEST_PASSPHRASE = "test-passphrase-123";
 
 async function installApiMock(page: Page): Promise<void> {
   const clubs: Array<Record<string, unknown>> = [];
@@ -48,36 +47,36 @@ async function installApiMock(page: Page): Promise<void> {
 }
 
 /**
- * Gets past the Verein + Mannschaft gate to the main app. Handles first run
- * (create club, then create team) and re-locking after a reload (select club +
- * passphrase, then select team). No-op if the app is already shown.
+ * Gets past the membership-driven gate to the main app. First run: create the
+ * club, then the first team, then open online (no passphrase). Reload: club and
+ * team auto-select, so only "Öffnen" on the unlock step is left. No-op if the
+ * app is already shown.
  */
-export async function passGate(page: Page, name = TEST_VEREIN, passphrase = TEST_PASSPHRASE, team = TEST_TEAM): Promise<void> {
+export async function passGate(page: Page, name = TEST_VEREIN, team = TEST_TEAM): Promise<void> {
   await page.waitForSelector(".tenant-card, #setup-title");
   if (await page.locator("#setup-title").count()) return;
 
-  if (await page.getByLabel("Vereinsname").count()) {
-    await page.getByLabel("Vereinsname").fill(name);
-    const password = page.locator(".tenant-card input[type='password']");
-    await password.nth(0).fill(passphrase);
-    await password.nth(1).fill(passphrase);
+  const clubField = page.getByLabel("Vereinsname");
+  const teamField = page.getByLabel("Mannschaft");
+  const open = page.getByRole("button", { name: "Öffnen", exact: true });
+  const app = page.locator("#setup-title");
+
+  await expect(clubField.or(teamField).or(open).or(app).first()).toBeVisible();
+  if (await clubField.count()) {
+    await clubField.fill(name);
     await page.getByRole("button", { name: /Verein anlegen/ }).click();
-  } else {
-    await page.locator(".tenant-card select").selectOption({ label: name });
-    await page.locator(".tenant-card input[type='password']").first().fill(passphrase);
-    await page.getByRole("button", { name: "Weiter", exact: true }).click();
   }
 
-  await page.waitForSelector(".tenant-card :text('Mannschaft')");
-  const createTeamBtn = page.getByRole("button", { name: /Anlegen & öffnen/ });
-  if (await createTeamBtn.count()) {
-    await page.getByLabel("Mannschaft").fill(team);
-    await createTeamBtn.click();
-  } else {
-    await page.locator(".tenant-card select").selectOption({ index: 1 });
-    await page.getByRole("button", { name: "Öffnen", exact: true }).click();
+  await expect(teamField.or(open).or(app).first()).toBeVisible();
+  if (await teamField.count()) {
+    await teamField.fill(team);
+    await page.getByRole("button", { name: /Anlegen & öffnen/ }).click();
   }
-  await expect(page.locator("#setup-title")).toBeVisible();
+
+  // Unlock step: online-only, just open.
+  await expect(open.or(app).first()).toBeVisible();
+  if (await open.count()) await open.click();
+  await expect(app).toBeVisible();
 }
 
 /** Navigate to the app and unlock the gate. */

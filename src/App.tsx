@@ -112,16 +112,17 @@ interface Notice {
 }
 
 interface AppProps {
+  userId: string;
   tenant: TenantMeta;
   team: TeamUnit;
-  cryptoKey: CryptoKey;
+  cryptoKey: CryptoKey | null;
   onLock: () => void;
 }
 
-function App({ tenant, team, cryptoKey, onLock }: AppProps) {
+function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
   const tenantId = tenant.id;
   const teamId = team.id;
-  const cacheScope = scopeKey(tenant.id, team.id);
+  const cacheScope = scopeKey(userId, tenant.id, team.id);
   const [match, setMatch] = useState<MatchState>(createMatch);
   const [archive, setArchive] = useState<SavedMatch[]>([]);
   const [deletedIds, setDeletedIds] = useState<string[]>([]);
@@ -181,10 +182,15 @@ function App({ tenant, team, cryptoKey, onLock }: AppProps) {
     return { archive: mergedArchive, deletedIds: mergedDeleted, tournaments: mergedTournaments, teams: mergedTeams, current };
   };
 
+  // The offline cache is optional: without a passphrase (online-only) the key is
+  // null and nothing is read from or written to IndexedDB.
+  const loadCache = () => (cryptoKey ? readEncryptedCache(cacheScope, cryptoKey) : Promise.resolve(null));
+  const saveCache = (data: CloudData) => (cryptoKey ? writeEncryptedCache(cacheScope, cryptoKey, data) : Promise.resolve());
+
   useEffect(() => {
     let cancelled = false;
     setSyncState("syncing");
-    Promise.all([readEncryptedCache(cacheScope, cryptoKey), fetchTenantData(tenantId, teamId, cryptoKey)]).then(async ([cached, result]) => {
+    Promise.all([loadCache(), fetchTenantData(tenantId, teamId, cryptoKey)]).then(async ([cached, result]) => {
       if (cancelled) return;
       if (!result.ok) {
         if (cached) reconcile(cached);
@@ -198,7 +204,7 @@ function App({ tenant, team, cryptoKey, onLock }: AppProps) {
         reconcile(cached);
       }
       const merged = reconcile(result.data);
-      await writeEncryptedCache(cacheScope, cryptoKey, merged);
+      await saveCache(merged);
       const ok = await pushTenantData(tenantId, teamId, cryptoKey, merged);
       if (cancelled) return;
       setSyncState(ok ? "synced" : "offline");
@@ -216,7 +222,7 @@ function App({ tenant, team, cryptoKey, onLock }: AppProps) {
     setSyncState("syncing");
     const handle = window.setTimeout(async () => {
       const data = { archive, deletedIds, tournaments, teams, current: match };
-      await writeEncryptedCache(cacheScope, cryptoKey, data);
+      await saveCache(data);
       const ok = await pushTenantData(tenantId, teamId, cryptoKey, data);
       setSyncState(ok ? "synced" : "error");
       if (ok) setLastSyncedAt(Date.now());
@@ -1741,19 +1747,19 @@ function readActiveTenant(): string | null {
 }
 
 function Root() {
-  const [unlocked, setUnlocked] = useState<{ tenant: TenantMeta; team: TeamUnit; key: CryptoKey } | null>(null);
+  const [unlocked, setUnlocked] = useState<{ userId: string; tenant: TenantMeta; team: TeamUnit; key: CryptoKey | null } | null>(null);
 
   if (!unlocked) {
     return (
       <TenantGate
         rememberedId={readActiveTenant()}
-        onUnlock={(tenant, team, key) => {
+        onUnlock={(userId, tenant, team, key) => {
           try {
-            localStorage.setItem(ACTIVE_TENANT_KEY, scopeKey(tenant.id, team.id));
+            localStorage.setItem(ACTIVE_TENANT_KEY, scopeKey(userId, tenant.id, team.id));
           } catch {
             /* ignore */
           }
-          setUnlocked({ tenant, team, key });
+          setUnlocked({ userId, tenant, team, key });
         }}
       />
     );
@@ -1761,7 +1767,8 @@ function Root() {
 
   return (
     <App
-      key={scopeKey(unlocked.tenant.id, unlocked.team.id)}
+      key={scopeKey(unlocked.userId, unlocked.tenant.id, unlocked.team.id)}
+      userId={unlocked.userId}
       tenant={unlocked.tenant}
       team={unlocked.team}
       cryptoKey={unlocked.key}
