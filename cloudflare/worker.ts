@@ -218,7 +218,17 @@ async function routeAuthenticated(request: Request, env: Env, auth: AuthContext,
   throw new HttpError(404, "NOT_FOUND", "The requested resource was not found.");
 }
 
-const PUBLIC_ASSETS = new Set(["/login.css", "/live.css", "/live.js", "/manifest.webmanifest", "/sw.js", "/registerSW.js", "/squora-favicon.png", "/squora-logo.png", "/pwa-192.png", "/pwa-512.png", "/pwa-maskable-512.png"]);
+// The compiled JS/CSS bundle and the app shell's small bootstrap scripts carry
+// no secrets — they're just static, content-hashed client code — and MUST be
+// fetchable without a session. The PWA's service worker precaches these at
+// install time regardless of whether the browser happens to be authenticated
+// at that moment; gating them behind requireAuth previously meant an
+// unauthenticated precache fetch got the login page's HTML back and cached
+// THAT under the .js/.css URL — a corruption that (since precache entries are
+// keyed by content hash and only refetched when the hash changes) persisted
+// across deploys until the file's actual content changed. The real auth
+// boundary is the /api/* data layer, not the compiled app shell.
+const PUBLIC_ASSETS = new Set(["/login.css", "/live.css", "/live.js", "/theme-init.js", "/manifest.webmanifest", "/sw.js", "/registerSW.js", "/squora-favicon.png", "/squora-logo.png", "/pwa-192.png", "/pwa-512.png", "/pwa-maskable-512.png"]);
 
 export default {
   async fetch(request, env): Promise<Response> {
@@ -238,7 +248,7 @@ export default {
       else if (publicInvite && request.method === "GET") response = await viewInvitation(request, env, decodeURIComponent(publicInvite[1]), requestId);
       else if (publicLiveApi && request.method === "GET") response = await getPublicLive(request, env, decodeURIComponent(publicLiveApi[1]), requestId);
       else if (publicLivePage && request.method === "GET") response = livePage(requestId);
-      else if (request.method === "GET" && (PUBLIC_ASSETS.has(path) || path.startsWith("/workbox-"))) {
+      else if (request.method === "GET" && (PUBLIC_ASSETS.has(path) || path.startsWith("/workbox-") || path.startsWith("/assets/"))) {
         response = withHeaders(await env.ASSETS.fetch(new Request(new URL(path, url.origin), request)), requestId);
       } else {
         try { auth = await requireAuth(request, env.DB); } catch (error) {

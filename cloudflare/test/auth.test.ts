@@ -25,10 +25,10 @@ describe("D1 authentication and revocable sessions", () => {
     expect((await SELF.fetch(`${ORIGIN}/api/v1/me`, { headers: { Cookie: cookie } })).status).toBe(401);
   });
 
-  it("shows the login page for an unauthenticated navigation, but never swaps a script/style sub-resource request for login HTML", async () => {
-    // A real browser navigation sends Accept: text/html — that's the only case
-    // that should render the login page for a non-API path.
-    const nav = await SELF.fetch(`${ORIGIN}/assets/index-anything.js`, { headers: { Accept: "text/html,application/xhtml+xml" } });
+  it("shows the login page for an unauthenticated navigation to a still-gated route, but never swaps a script/style sub-resource request for login HTML", async () => {
+    // "/" is the SPA shell itself — the one non-API GET route still gated by
+    // requireAuth. A real browser navigation sends Accept: text/html.
+    const nav = await SELF.fetch(`${ORIGIN}/`, { headers: { Accept: "text/html,application/xhtml+xml" } });
     expect(nav.status).toBe(200);
     expect(nav.headers.get("Content-Type")).toContain("text/html");
     expect(await nav.text()).toContain("Anmelden");
@@ -41,10 +41,26 @@ describe("D1 authentication and revocable sessions", () => {
     for (const accept of ["*/*", "text/css,*/*;q=0.1", undefined]) {
       const headers: Record<string, string> = {};
       if (accept) headers.Accept = accept;
-      const asset = await SELF.fetch(`${ORIGIN}/assets/index-anything.js`, { headers });
+      const asset = await SELF.fetch(`${ORIGIN}/`, { headers });
       expect(asset.status).not.toBe(200);
       expect(asset.headers.get("Content-Type")).not.toContain("text/html");
     }
+  });
+
+  it("serves the compiled JS/CSS app-shell bundle without a session, so the service worker can precache it regardless of auth state", async () => {
+    // These carry no secrets — just static, content-hashed client code — and
+    // must never require auth: a service worker precaches them at install
+    // time regardless of whether the browser happens to be authenticated at
+    // that moment. Gating them previously meant an unauthenticated precache
+    // fetch got the login page's HTML back and permanently cached THAT under
+    // the .js/.css URL (precache entries are only re-fetched when the file's
+    // content hash changes, so this persisted across deploys).
+    const asset = await SELF.fetch(`${ORIGIN}/assets/index-anything.js`, { headers: { Accept: "*/*" } });
+    expect(asset.headers.get("Content-Type") ?? "").not.toContain("text/html");
+    expect(await asset.text()).not.toContain("Anmelden");
+    const themeInit = await SELF.fetch(`${ORIGIN}/theme-init.js`, { headers: { Accept: "*/*" } });
+    expect(themeInit.headers.get("Content-Type") ?? "").not.toContain("text/html");
+    expect(await themeInit.text()).not.toContain("Anmelden");
   });
 
   it("rejects invalid credentials generically and rejects cross-origin login", async () => {

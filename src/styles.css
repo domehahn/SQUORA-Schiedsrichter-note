@@ -23,6 +23,10 @@
   --brand-gradient: linear-gradient(135deg, var(--brand-blue) 0%, var(--brand-green) 100%);
   --brand-gradient-soft: linear-gradient(135deg, rgba(11,37,89,.08) 0%, rgba(31,157,99,.08) 100%);
   color-scheme: light dark;
+  /* Forces this stylesheet's build hash to change when nothing else in it
+     does, so the service worker's content-hash-keyed precache is guaranteed
+     to re-fetch it — see src/buildInfo.ts. */
+  --build-id: "2026-09-04.1";
 }
 
 /* Dark mode: follows the system preference by default (guarded so an explicit
