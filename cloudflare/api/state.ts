@@ -26,6 +26,21 @@ function domainId(source: Record<string, unknown>): string {
   return source.id;
 }
 
+/**
+ * Cross-team BOLA guard. A body id (match or tournament) that already exists in
+ * this club under a *different* team must never be upserted, silently
+ * reassigned or removed through this team's `/state` endpoint. A foreign id is
+ * indistinguishable from a missing one → 404, no mutation.
+ */
+async function assertNoForeignTeamRows(db: D1Database, table: "matches" | "tournaments", club: string, team: string, ids: string[]): Promise<void> {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return;
+  const clash = await db.prepare(
+    `SELECT 1 FROM ${table} WHERE club_id=? AND team_id<>? AND id IN (SELECT value FROM json_each(?)) LIMIT 1`,
+  ).bind(club, team, JSON.stringify(unique)).first();
+  if (clash) throw new HttpError(404, "NOT_FOUND", "The requested resource was not found.");
+}
+
 function matchStatus(phase: unknown): "setup" | "live" | "finished" | "abandoned" {
   if (phase === "finished") return "finished";
   if (phase === "abandoned") return "abandoned";
@@ -96,9 +111,9 @@ function matchStatements(
   const statements: D1PreparedStatement[] = [
     db.prepare(`INSERT INTO matches (club_id,team_id,id,match_date,competition,venue,state,payload_json,saved_at,version,created_at,updated_at)
       VALUES (?,?,?,?,?,?,?,?,?,1,?,?)
-      ON CONFLICT(club_id,id) DO UPDATE SET team_id=excluded.team_id,match_date=excluded.match_date,competition=excluded.competition,venue=excluded.venue,state=excluded.state,payload_json=excluded.payload_json,saved_at=excluded.saved_at,version=matches.version+1,updated_at=excluded.updated_at,deleted_at=NULL`)
+      ON CONFLICT(club_id,id) DO UPDATE SET match_date=excluded.match_date,competition=excluded.competition,venue=excluded.venue,state=excluded.state,payload_json=excluded.payload_json,saved_at=excluded.saved_at,version=matches.version+1,updated_at=excluded.updated_at,deleted_at=NULL WHERE matches.team_id=excluded.team_id`)
       .bind(club, team, id, matchDate, typeof meta.competition === "string" ? meta.competition.slice(0, 160) : "", typeof meta.venue === "string" ? meta.venue.slice(0, 200) : "", matchStatus(state.phase), payloadJson, savedAt, now, now),
-    db.prepare("DELETE FROM match_events WHERE club_id=? AND match_id=?").bind(club, id),
+    db.prepare("DELETE FROM match_events WHERE club_id=? AND team_id=? AND match_id=?").bind(club, team, id),
   ];
   for (const rawEvent of rawEvents) {
     const event = objectValue(minimize(rawEvent));
@@ -123,7 +138,7 @@ function tournamentStatement(
   return {
     id,
     statement: db.prepare(`INSERT INTO tournaments (club_id,team_id,id,name,tournament_date,payload_json,version,created_at,updated_at) VALUES (?,?,?,?,?,?,1,?,?)
-      ON CONFLICT(club_id,id) DO UPDATE SET name=excluded.name,tournament_date=excluded.tournament_date,payload_json=excluded.payload_json,version=tournaments.version+1,updated_at=excluded.updated_at`)
+      ON CONFLICT(club_id,id) DO UPDATE SET name=excluded.name,tournament_date=excluded.tournament_date,payload_json=excluded.payload_json,version=tournaments.version+1,updated_at=excluded.updated_at WHERE tournaments.team_id=excluded.team_id`)
       .bind(club, team, id, name, typeof tournament.date === "string" ? tournament.date.slice(0, 40) : null, payloadJson, now, now),
   };
 }
@@ -197,6 +212,12 @@ export async function putState(request: Request, env: Env, auth: AuthContext, cl
   if ((current0?.version ?? 0) !== expectedVersion) throw new HttpError(409, "VERSION_CONFLICT", "The team data was changed by another client.");
   const matchWas = new Map(storedMatches.results.map((row) => [row.id, { payloadJson: row.payloadJson, savedAt: row.savedAt }]));
   const tournamentWas = new Map(storedTournaments.results.map((row) => [row.id, row.payloadJson]));
+
+  // Reject any body id that belongs to another team of this club before writing anything.
+  const upsertMatchIds = matchUpsert.map((raw) => domainId(objectValue(objectValue(minimize(raw)).state)));
+  const upsertTournamentIds = tournamentUpsert.map((raw) => domainId(objectValue(minimize(raw))));
+  await assertNoForeignTeamRows(env.DB, "matches", club, team, [...upsertMatchIds, ...matchRemove]);
+  await assertNoForeignTeamRows(env.DB, "tournaments", club, team, [...upsertTournamentIds, ...tournamentRemove]);
 
   const statements: D1PreparedStatement[] = [
     env.DB.prepare("UPDATE team_sync_versions SET version=version+1,updated_at=? WHERE club_id=? AND team_id=? AND version=?").bind(now, club, team, expectedVersion),

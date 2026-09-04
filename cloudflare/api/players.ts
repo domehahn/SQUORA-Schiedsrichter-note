@@ -3,6 +3,7 @@ import { HttpError, json, readJson, requireSameOrigin } from "../core/http";
 import { isId, newId } from "../core/id";
 import { birthdateValue, parseBody } from "../core/validation";
 import { requireTeamAccess } from "../middleware/tenant";
+import { writeAudit } from "../services/audit-service";
 
 interface PlayerRow {
   id: string;
@@ -44,6 +45,10 @@ export async function createPlayer(request: Request, env: Env, auth: AuthContext
   } catch {
     throw new HttpError(409, "PLAYER_EXISTS", "A player with that external id already exists in this team.");
   }
+  await writeAudit(env.DB, {
+    clubId: context.clubId, userId: auth.userId, action: "PLAYER_CREATED", entityType: "player", entityId: player.id,
+    metadata: { teamId: context.teamId, hasPassNumber: player.passNumber !== null, hasBirthdate: player.birthdate !== null, source: player.externalId ? "dfbnet" : "manual" },
+  });
   return json({ player: { ...player, updatedAt: now } }, requestId, 201);
 }
 
@@ -68,6 +73,10 @@ export async function updatePlayer(request: Request, env: Env, auth: AuthContext
       ? new HttpError(409, "VERSION_CONFLICT", "The player was changed by another client.")
       : new HttpError(404, "NOT_FOUND", "The requested resource was not found.");
   }
+  await writeAudit(env.DB, {
+    clubId: context.clubId, userId: auth.userId, action: "PLAYER_UPDATED", entityType: "player", entityId: playerId,
+    metadata: { teamId: context.teamId, fields: ["name", "shirtNumber", "passNumber", "birthdate"].filter((key) => key in body).join(",") },
+  });
   return json({ player: { id: playerId, name: body.name, shirtNumber: opt(body.shirtNumber), passNumber: opt(body.passNumber), birthdate, version: (body.version as number) + 1, updatedAt: now } }, requestId);
 }
 
@@ -84,5 +93,6 @@ export async function deletePlayer(request: Request, env: Env, auth: AuthContext
       ? new HttpError(409, "VERSION_CONFLICT", "The player was changed by another client.")
       : new HttpError(404, "NOT_FOUND", "The requested resource was not found.");
   }
+  await writeAudit(env.DB, { clubId: context.clubId, userId: auth.userId, action: "PLAYER_DELETED", entityType: "player", entityId: playerId, metadata: { teamId: context.teamId } });
   return json({ ok: true }, requestId);
 }

@@ -103,16 +103,20 @@ function upsertStatements(db: D1Database, clubId: string, teamId: string, player
 
 async function applyImport(env: Env, auth: AuthContext, clubId: string, teamId: string, importId: string, players: RosterPlayer[], mode: RosterMode): Promise<void> {
   const now = new Date().toISOString();
+  // All player upserts, the optional replace cleanup AND the status flip run in
+  // one D1 batch (= one transaction). Either the roster and `completed` land
+  // together, or nothing does — no "roster written, status still previewed".
   const statements = upsertStatements(env.DB, clubId, teamId, players, now);
   if (mode === "replace") statements.push(reconcileStatement(env.DB, clubId, teamId, players));
+  statements.push(env.DB.prepare("UPDATE dfbnet_imports SET status='completed',completed_at=?,record_count=? WHERE club_id=? AND id=? AND team_id=? AND status<>'completed'")
+    .bind(now, players.length, clubId, importId, teamId));
   try {
     await env.DB.batch(statements);
-    await env.DB.prepare("UPDATE dfbnet_imports SET status='completed',completed_at=?,record_count=? WHERE club_id=? AND id=?")
-      .bind(now, players.length, clubId, importId).run();
     await writeAudit(env.DB, { clubId, userId: auth.userId, action: "DFBNET_IMPORT_COMPLETED", entityType: "dfbnet_import", entityId: importId, metadata: { records: players.length, teamId, mode } });
   } catch (error) {
-    await env.DB.prepare("UPDATE dfbnet_imports SET status='failed',completed_at=?,error_summary=? WHERE club_id=? AND id=?")
-      .bind(now, "roster persistence failed", clubId, importId).run();
+    // The batch rolled back, so no roster rows changed; mark the attempt failed.
+    await env.DB.prepare("UPDATE dfbnet_imports SET status='failed',completed_at=?,error_summary=? WHERE club_id=? AND id=? AND team_id=? AND status<>'completed'")
+      .bind(now, "roster persistence failed", clubId, importId, teamId).run();
     await writeAudit(env.DB, { clubId, userId: auth.userId, action: "DFBNET_IMPORT_FAILED", entityType: "dfbnet_import", entityId: importId, metadata: { teamId, mode } });
     throw error;
   }
