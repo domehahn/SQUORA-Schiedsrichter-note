@@ -20,17 +20,25 @@ A `scheduled` handler runs daily (`triggers.crons`): retention cleanup
 ## Authentication & sessions
 
 - D1 `users` is authoritative; the production account exists only in D1 (no
-  runtime credential secret). Passwords are hashed with PBKDF2-SHA256 as 6
-  chained rounds of 100 000 (the Workers runtime rejects a single PBKDF2 call
-  above 100 000) ≈ 600 000 iterations of work; format
-  `pbkdf2-sha256$100000*6$<salt>$<hash>`.
+  runtime credential secret). Passwords are hashed with PBKDF2-SHA256 in a
+  versioned format. Preferred: one 600 000-iteration `node:crypto` call
+  (`pbkdf2-sha256$i=600000$<salt>$<hash>`), used when a per-isolate probe finds
+  it available. Fallback: 6 chained WebCrypto rounds of 100 000
+  (`pbkdf2-sha256$100000*6$…`) — `crypto.subtle` rejects a single call above
+  100 000. `verifyPassword` reports `needsRehash`; login upgrades legacy hashes.
 - Login → a random 256-bit session token; only `SHA-256(token)` is stored in
   `sessions`. Cookie `HttpOnly; Secure; SameSite=Strict`, 8 h expiry.
 - Sessions are individually and bulk revocable. `optionalAuth` re-checks
   `users.status='active'` and `revoked_at IS NULL AND expires_at > now` on every
   request — disabling an account or revoking a session takes effect immediately.
-- Membership lifecycle API (invite / role / team / status / removal) with
-  `MEMBER_*` audit; `active` is required everywhere; last-owner invariant.
+- Membership lifecycle API (role / team / status / removal) with `MEMBER_*`
+  audit; `active` is required everywhere; last-owner invariant.
+- Joining is via a **token invitation** (`api/invitations.ts`, table
+  `invitations`): 256-bit token, `SHA-256` at rest, 7-day expiry, one-time,
+  generic 404. `POST /auth/register` (public, token-gated — e-mail comes from
+  the invitation) creates the account + active membership in one batch; an
+  existing signed-in user accepts via `POST /invitations/accept` and the
+  e-mail must match. No existing account is ever silently added to a club.
 
 ## Tenant & authorization model
 
@@ -125,11 +133,14 @@ structured line.
 
 ## Quality baseline
 
-- Unit: 36 · Worker (Miniflare + D1 `0001–0017`): 75 · e2e (Playwright): 19
+- Unit: 36 · Worker (Miniflare + D1 `0001–0018`): 85 · e2e (Playwright): 19
   (+1 skipped) · real-Worker e2e: 5 · build + lint + `npm audit --audit-level=high`:
   clean.
-- CI: `.github/workflows/ci.yml` (quality, e2e, e2e-worker, security, CodeQL).
-  `main` branch protection requires all 5 checks.
+- CI: `.github/workflows/ci.yml` (quality, e2e, e2e-worker, security, CodeQL;
+  plus a gated `staging-e2e` remote smoke). `security` runs `npm audit
+  --audit-level=high` (hard fail), gitleaks full history and a PII-history
+  guard. `main` branch protection requires the 5 core checks —
+  `docs/operations/branch-protection.md`.
 
 ## Known gaps
 

@@ -11,6 +11,7 @@
     "test:worker": "vitest run",
     "test:e2e": "playwright test",
     "test:e2e:worker": "npm run build && node tests/worker/prepare.ts && playwright test --config playwright.worker.config.ts",
+    "test:e2e:staging": "playwright test --config playwright.staging.config.ts",
     "test:service-worker": "npm run build && node scripts/verify-service-worker.mjs",
     "check:pii-history": "node scripts/check-pii-history.mjs",
     "test": "npm run test:unit && npm run test:worker",

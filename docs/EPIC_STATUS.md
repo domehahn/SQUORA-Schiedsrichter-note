@@ -1,8 +1,9 @@
 # CODEX EPIC — implementation status
 
 Audit of the 47-epic production-readiness brief against `main` at commit
-`5b6ecc0`. Legend: **done** shipped and tested · **partial** core in place,
-gaps noted · **open** not started.
+`351afdb`. Legend: **done** shipped and tested · **partial** core in place,
+gaps noted · **open** not started. See `PRODUCTION_READINESS_FINAL.md` for the
+evidence-based control assessment and the operational-verification backlog.
 
 | Epic | Status | Evidence / gap |
 | --- | --- | --- |
@@ -11,7 +12,7 @@ gaps noted · **open** not started.
 | 2 — Data model | done | `users, clubs, memberships, teams, players, matches, match_events, tournaments, dfbnet_imports, sessions, audit_log` + `team_*` sync tables. UUID ids, `version` columns. |
 | 3 — Server tenant resolution | done | `middleware/tenant.ts` `requireTenantAccess` / `requireTeamAccess`; no club query runs before a `TenantContext`. |
 | 4 — RBAC | done | `auth/roles.ts`, `auth/permissions.ts` (5 roles, 17 permissions); every API passes an explicit permission. |
-| 5 — Auth & sessions | done | D1 users; password hashing PBKDF2-SHA256 as 6 chained rounds of 100k (the Workers runtime rejects a single call above 100k) ≈ 600k work; revocable hashed sessions (`auth/session.ts`), logout / logout-all, 8h expiry, disabled-account check. Production account lives only in D1; no runtime credential secret. |
+| 5 — Auth & sessions | done | D1 users; password hashing PBKDF2-SHA256 — versioned format `pbkdf2-sha256$i=<iters>$…` via a single 600k-iteration `node:crypto` call, probed per isolate, falling back to 6×100k chained WebCrypto rounds (the Workers `crypto.subtle` cap is 100k). `verifyPassword` returns `{ok, needsRehash}`; login rehashes legacy hashes. Real-`workerd` confirmation of the `i=` path is a staging step. Revocable hashed sessions, logout / logout-all, 8h expiry, disabled-account check. |
 | 6 — Origin isolation | partial | Product decision: production stays at `squora.de/schiedsrichter-note/` (not a dedicated origin). Worker strips the `/schiedsrichter-note` prefix on the way in and prefixes every URL it emits; cookie `Path=/`; SW `NetworkOnly` matches `/api/` `/auth/` at any depth. Full origin isolation (own subdomain) deferred. |
 | 7 — Local storage security | done | `encryptedCache.ts` (IndexedDB, AES-GCM record); `localData.ts` legacy keys read-only via migration flow. |
 | 8 — Cryptography | done | Server password hash: PBKDF2-SHA256, 6 chained rounds of 100k ≈ 600k work (Workers per-call cap is 100k). Offline cache: PBKDF2-HMAC-SHA256 600k (browser, no cap), 128-bit salt, AES-256-GCM, 96-bit IV; passphrase floor 12, no max; key non-extractable, memory only. |
@@ -30,7 +31,7 @@ gaps noted · **open** not started.
 | 21 — Backup & recovery | done | Time Travel + export runbook; staged marker/restore rehearsal completed 2026-09-04 in under 2 minutes with all migrations intact. |
 | 22 — Data retention & GDPR | partial | `docs/privacy/*` written. Export / account-tombstone implemented and tested. Club deletion is a 30-day grace window (`status='deleted'` + `deletion_due_at`, cancellable) that the daily cron finishes via `runClubPurge`. That same cron (`services/retention.ts` via `triggers.crons`) purges expired sessions and trims `audit_log` (24 mo) / `dfbnet_imports` (12 mo); `services/alerting.ts` posts a threshold self-check to `ALERT_WEBHOOK_URL`. `putState` sheds archived matches older than 3 seasons from the server DB (kept in the client's local archive). Still policy-only: weekly logical export. |
 | 23 — CI/CD | done | `.github/workflows/ci.yml` — quality, e2e, e2e-worker, security (`npm audit --audit-level=high` hard-fails), CodeQL. `main` branch protection requires all 5 checks + strict up-to-date + linear history; `enforce_admins:false` as an escape hatch. |
-| 24 — E2E against real Worker | done | `tests/worker/` Playwright suite runs against `wrangler dev --local` + local D1 (`playwright.worker.config.ts`, global-setup seeds a throwaway DB). CI job `e2e-worker`. Covers login, `/me`, session survival + logout, cross-tenant 404. |
+| 24 — E2E against real Worker | done | `tests/worker/` Playwright suite runs against `wrangler dev --local` + local D1 (`playwright.worker.config.ts`, global-setup seeds a throwaway DB). CI job `e2e-worker`. Covers login, `/me`, session survival + logout, cross-tenant 404. A **remote** smoke against deployed staging (`playwright.staging.config.ts`, `tests/staging/smoke.spec.ts`, gated CI job `staging-e2e`) verifies the real `workerd` runtime — first green run is a go-live step. |
 | 25 — Security test suite | done | `cloudflare/test/security/{csrf,session,bola,cross-team,rbac,concurrency,rate-limit}.test.ts` run in the `test:worker` merge gate. |
 | 26 — Environments | done | `wrangler.jsonc` `env.development` (`routes:[]`) / `env.staging` / top-level production, separate D1 + three rate-limiter namespaces each. |
 | 27 — Deployment safety | done | Deployment and rollback runbooks; staging rollback and roll-forward rehearsal completed 2026-09-04. |
@@ -39,9 +40,9 @@ gaps noted · **open** not started.
 | 30 — Service worker security | done | Vite PWA `NetworkOnly` for `/api/*` and `/auth/*`; `verify-service-worker.mjs` asserts generated output and runs in CI. |
 | 31 — Import / export hardening | partial | `core/validation.ts` now has a declarative `parseBody(value, spec)` that rejects undeclared fields (422 `UNKNOWN_FIELD`); adopted in createTeam / createClub / deleteClub / deleteAccount. Snapshot endpoints still on the primitives — incremental rollout. |
 | 32 — Repository architecture | partial | Worker split into layers. `src/App.tsx` 1780 → ~1260: RosterEditor, TournamentPanel, TournamentReport, TeamLibraryPanel, StatsPanel, MetaPanel, CollapsibleSection, TeamActions, SessionExpiredModal and the download helpers extracted to `panels.tsx` / `RosterEditor.tsx` / `download.ts`. No worker `repositories/` layer yet. |
-| 33 — Legacy KV migration | done | Explicit opt-in UI plus authenticated list/read/migrate API; source fingerprint verification, idempotency, D1 marker and audits; source remains intact. |
+| 33 — Legacy KV migration | done | Explicit opt-in UI plus authenticated list/read/migrate API; source fingerprint verification, idempotency, D1 marker and audits; source remains intact. Migration complete + blobs deleted 2026-09-04; the `LEGACY_DATA` KV binding is removed from production (routes guarded, return empty), kept only as a throwaway namespace in the test runtime. |
 | 34 — Tenant-model migration | done | `legacy_migrations` stores verified `user + legacyTenantId → club + team`; foreign targets and remapping are rejected and tested. |
-| 35 — Repository security | done | CI secret guard; no secrets tracked; fixtures synthetic. |
+| 35 — Repository security | done | CI `security` job checks out full history (`fetch-depth: 0`); `gitleaks-action@v2` (`.gitleaks.toml`); working-tree secret guard; `scripts/check-pii-history.mjs` scans every commit for free-mail addresses + DFBnet export headers. `docs/security/GIT_HISTORY_PII_RESPONSE.md` — assessed findings (maintainer's own address only; no secrets; no third-party PII) + `git filter-repo` plan. Dead `cloudflare/auth.ts` (old `AUTH_EMAIL` bootstrap) removed. |
 | 36 — Dependency security | done | `npm audit` clean; `npm audit --audit-level=high` in CI. |
 | 37 — Production documentation | partial | `architecture/`, `security/`, `privacy/`, `operations/`, `runbooks/` populated. `INCIDENT_RESPONSE.md` added. Some cross-links pending. |
 | 38 — Threat model | done | `docs/security/THREAT_MODEL.md` covers the listed threat classes. |
@@ -49,7 +50,7 @@ gaps noted · **open** not started.
 | 40 — API input validation | done | `core/validation.ts` — bounded strings, UUID format checks, event/array caps. |
 | 41 — Pagination | partial | `listMatches` and `listMembers` cursor-paginated; `listDfbnetImports` limit-capped (≤ 100). A public audit-list endpoint is intentionally not exposed. |
 | 42 — Soft vs hard delete | done | `matches`/`tournaments` soft-delete (`deleted_at`); club = 30-day soft grace then cron cascade (`purgeClub`); user = tombstone. All in `DATA_DELETION.md` + `lifecycle.test.ts`. |
-| 43 — Account lifecycle | partial | `users.status` + disabled-session check; invite creates a non-login-capable invited account. Secure invite acceptance / password setup remains a follow-up. |
+| 43 — Account lifecycle | done | `users.status` + disabled-session check. Full token-based invitation lifecycle (`api/invitations.ts`, migration 0018): 256-bit token, SHA-256 at rest, 7-day expiry, one-time, generic 404. `POST /auth/register` (public, token-gated, email from the invitation) sets a real password + active membership in one batch; `POST /invitations/accept` for an existing signed-in user requires an email match. No existing account is ever silently added to a club. `invitations.test.ts`. |
 | 44 — Membership lifecycle | done | Audited invite, role/team/status changes and removal API; `active` is required everywhere, revocation is immediate, last-owner invariant tested. |
 | 45 — Tenant switching | done | `listClubs` / `listTeams` return only `status='active'` memberships; client cache is UI-only, never an authz input. |
 | 46 — Privacy by design | done | `DATA_CLASSIFICATION.md` review checklist; minors covered in `DFBNET_DATA_HANDLING.md`. |

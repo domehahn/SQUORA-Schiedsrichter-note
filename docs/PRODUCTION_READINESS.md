@@ -4,7 +4,9 @@ A release is **READY** only when every item below is GREEN with evidence
 (a passing CI run, a test file, a rehearsal log entry). Any RED item blocks
 production deployment.
 
-Status as of commit `5b6ecc0` — 2026-09-04.
+Status as of commit `351afdb` — 2026-09-04. The full evidence-based control
+assessment is `docs/PRODUCTION_READINESS_FINAL.md`; this table is the release
+checklist.
 
 | # | Criterion | State | Evidence / what's missing |
 | --- | --- | --- | --- |
@@ -29,8 +31,13 @@ Status as of commit `5b6ecc0` — 2026-09-04.
 | 19 | Dedicated security suite | 🟢 | `cloudflare/test/security/{csrf,session,bola,rbac,concurrency,rate-limit}.test.ts` in the `test:worker` gate |
 | 20 | Rate limiting beyond login | 🟢 | `EXPORT_RATE_LIMITER` (5/60s), `IMPORT_RATE_LIMITER` (20/60s); `core/rate-limit.ts` composite IP+account+tenant+endpoint key; `rate-limit.test.ts` |
 | 21 | Legacy KV → D1 migration endpoint (idempotent, auditable) | 🟢 | authenticated list/read/migrate endpoints; verified source fingerprint, stored `legacyTenantId → club/team`, idempotency, no source deletion, audit events; `legacy-migration.test.ts` |
-| 22 | Observability operational (dashboards / alerts) | 🟡 | invocation logging on; daily cron (`services/alerting.ts`) posts a summary to `ALERT_WEBHOOK_URL` when failed-login / rate-limit / import-failure thresholds are crossed — needs the secret set in production to be live |
+| 22 | Observability operational (dashboards / alerts) | 🟡 | invocation logging on; daily cron (`services/alerting.ts`) posts a summary to `ALERT_WEBHOOK_URL` when thresholds are crossed — needs the secret **and one recorded synthetic delivery** (`docs/runbooks/alert-delivery.md`) |
 | 23 | Incident response documented | 🟢 | `docs/runbooks/incident-response.md` |
+| 24 | Invitation lifecycle (token possession, no auto-join) | 🟢 | `api/invitations.ts` + `invitations.test.ts` (10 cases); `migration 0018` |
+| 25 | Full-history secret + PII scan | 🟢 | `security` job `fetch-depth: 0` + gitleaks + `check-pii-history.mjs`; `docs/security/GIT_HISTORY_PII_RESPONSE.md` |
+| 26 | D1 EU region verified | 🟡 | `wrangler d1 info` step in `DEPLOYMENT.md`; maintainer must run + record for all three DBs |
+| 27 | `main` branch protection reviewed | 🟡 | `docs/operations/branch-protection.md`; maintainer must confirm + record |
+| 28 | Remote staging runtime smoke green | 🟡 | `tests/staging/smoke.spec.ts` + gated `staging-e2e` job; first green run + `wrangler tail` KDF check outstanding |
 
 Legend: 🟢 done · 🟡 partial · 🔴 not started.
 
@@ -43,7 +50,12 @@ actually deliver notifications.
 
 ## Minimum path to READY
 
-1. `wrangler secret put ALERT_WEBHOOK_URL` in production (Slack-compatible
-   incoming webhook) so the scheduled self-check can deliver (item 22).
-2. Add the weekly encrypted logical `wrangler d1 export` job (retention cleanup
-   itself now runs daily via `triggers.crons`).
+1. `wrangler secret put ALERT_WEBHOOK_URL` in production + one recorded synthetic
+   delivery (`docs/runbooks/alert-delivery.md`) — item 22.
+2. Run `wrangler d1 info` for all three databases; record "EU, YYYY-MM-DD" — item 26.
+3. Review `main` branch protection against `docs/operations/branch-protection.md`;
+   record the date — item 27.
+4. Enable and get one green `staging-e2e` run; `wrangler tail` a staging login to
+   confirm the `i=` PBKDF2 path (no `Pbkdf2 failed`) — item 28.
+5. Add the weekly logical `wrangler d1 export` job (daily retention already runs
+   via `triggers.crons`).

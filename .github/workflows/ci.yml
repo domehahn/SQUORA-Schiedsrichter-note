@@ -128,6 +128,51 @@ jobs:
       - name: DFBnet / PII fixture guard (full history)
         run: node scripts/check-pii-history.mjs
 
+  staging-e2e:
+    name: Remote smoke against deployed staging
+    runs-on: ubuntu-latest
+    # Gated: set repo variable RUN_STAGING_E2E=true and the secrets below to enable.
+    # Until then this job is skipped (not failed) so it is not a false green.
+    if: ${{ vars.RUN_STAGING_E2E == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs: [quality, e2e, e2e-worker, security]
+    concurrency:
+      group: staging-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Deploy to staging
+        run: npx wrangler deploy --env staging
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Apply D1 migrations (staging)
+        run: npx wrangler d1 migrations apply schiedsrichter-note-staging --remote --env staging
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+      - name: Remote smoke / E2E
+        run: npm run test:e2e:staging
+        env:
+          STAGING_URL: ${{ vars.STAGING_URL }}
+          STAGING_TEST_EMAIL: ${{ secrets.STAGING_TEST_EMAIL }}
+          STAGING_TEST_PASSWORD: ${{ secrets.STAGING_TEST_PASSWORD }}
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-staging
+          path: playwright-report
+          retention-days: 7
+
   codeql:
     name: CodeQL
     runs-on: ubuntu-latest

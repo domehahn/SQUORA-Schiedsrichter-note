@@ -70,9 +70,13 @@ notes only.
    characters, no maximum. This is a per-device confidentiality aid, never an
    authorization boundary.
 
-3. **DFBnet minimization is independent of encryption (implemented).** Birth
-   date, pass number, nationality and eligibility are stripped server-side
-   (`FORBIDDEN_DFBNET_FIELDS`) regardless of transport encryption.
+3. **DFBnet minimization is independent of encryption (implemented).**
+   Nationality, eligibility/`Spielrecht` and registration dates are stripped
+   server-side at every depth. Pass number and birth date are retained **only**
+   on the referee's own-team relational roster (`players`) for the passport /
+   eligibility check (product decision 2026-09-04, purpose + legal basis in
+   `docs/privacy/DFBNET_DATA_HANDLING.md`); the birth date never enters the
+   `/state` sync blob. This is orthogonal to transport encryption.
 
 4. **Client-side E2E of free-text notes is NOT yet implemented.** Today, notes
    and incident text travel inside `matches.payload_json` / the team-state blob
