@@ -504,7 +504,8 @@ label:not(.tenant-check):not(.checkbox-field):not(.team):has(select:focus) > spa
 .dialog-warning .checkbox-field { margin-top: 4px; font-size: 12px; color: #8a4b12; }
 
 /* --- Vereins-Gate (tenant) --- */
-.tenant-gate { min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: max(24px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom)); background: var(--brand-gradient); }
+.tenant-gate { position: relative; min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: max(24px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom)); background: var(--brand-gradient); }
+.tenant-gate-toggle { position: absolute; top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); }
 .tenant-card { width: min(100%, 440px); display: flex; flex-direction: column; gap: 12px; padding: 30px; border: 1px solid var(--line); border-radius: 20px; background: var(--glass); box-shadow: 0 24px 70px rgba(17,48,89,.16); }
 .tenant-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
 .tenant-brand img { width: 46px; height: 46px; object-fit: contain; }

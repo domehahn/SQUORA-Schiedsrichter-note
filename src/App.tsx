@@ -13,7 +13,7 @@ import { CollapsibleSection, MetaPanel, SessionExpiredModal, StatsPanel, TeamAct
 import { TeamRosterPanel } from "./TeamRosterPanel";
 import { downloadBlob, downloadJson } from "./download";
 import { ACTIVE_TENANT_KEY, SOUND_KEY } from "./localData";
-import { applyTheme, loadTheme, nextTheme, saveTheme, THEME_LABEL, type ThemeMode } from "./theme";
+import { ThemeToggle } from "./ThemeToggle";
 import { readEncryptedCache, writeEncryptedCache } from "./encryptedCache";
 import { scopeKey, type TeamUnit, type TenantMeta } from "./tenant";
 import {
@@ -134,7 +134,6 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [teams, setTeams] = useState<SavedTeam[]>([]);
   const [soundOn, setSoundOn] = useState<boolean>(loadSound);
-  const [theme, setTheme] = useState<ThemeMode>(loadTheme);
   const [sessionExpired, setSessionExpired] = useState(false);
   const [syncState, setSyncState] = useState<SyncState>("idle");
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
@@ -156,7 +155,6 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
   useWakeLock(match.runningSince !== null);
 
   useEffect(() => { try { localStorage.setItem(SOUND_KEY, soundOn ? "1" : "0"); } catch { /* ignore */ } }, [soundOn]);
-  useEffect(() => { applyTheme(theme); saveTheme(theme); }, [theme]);
 
   useEffect(() => {
     const check = async () => {
@@ -832,9 +830,7 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
           <button className="sound-toggle" aria-pressed={soundOn} title={soundOn ? "Signaltöne aus" : "Signaltöne an"} onClick={() => { unlockAudio(); setSoundOn((value) => !value); }}>
             <Icon name={soundOn ? "sound" : "mute"} />
           </button>
-          <button className="sound-toggle" title={`Anzeige: ${THEME_LABEL[theme]} · tippen zum Wechseln`} onClick={() => setTheme((value) => nextTheme(value))}>
-            <Icon name={theme === "light" ? "sun" : theme === "dark" ? "moon" : "monitor"} />
-          </button>
+          <ThemeToggle />
           <button className={`save-status sync-${syncState}`} onClick={syncNow} title="Jetzt synchronisieren">
             <span className="save-dot" /> <span className="save-text">{syncStatusLabel[syncState]}</span>
           </button>

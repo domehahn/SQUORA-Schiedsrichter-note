@@ -4,6 +4,7 @@ import { hasEncryptedCache, readEncryptedCache, writeEncryptedCache } from "./en
 import { Icon } from "./icons";
 import { LegacyMigrationPanel } from "./LegacyMigrationPanel";
 import { ageGroups } from "./match";
+import { ThemeToggle } from "./ThemeToggle";
 import {
   acceptInvitation,
   createTeamUnit,
@@ -225,6 +226,7 @@ export function TenantGate({ rememberedId, onUnlock }: Props) {
 
   return (
     <div className="tenant-gate">
+      <ThemeToggle className="tenant-gate-toggle" />
       <form className="tenant-card" onSubmit={submit}>
         <div className="tenant-brand"><img src={`${import.meta.env.BASE_URL}squora-logo.png`} alt="" /><span><strong>SQUORA</strong><small>Schiedsrichter Note</small></span></div>
 
