@@ -17,26 +17,95 @@ removal.
 
 | Check | Scope | Fails on |
 | --- | --- | --- |
-| `gitleaks/gitleaks-action@v2` (`.gitleaks.toml`) | full history (`fetch-depth: 0`) | secrets / keys / tokens; synthetic hashes allow-listed |
+| `gitleaks` (`.gitleaks.toml`), explicit CLI with `--log-opts="--all"` | full history, every reachable commit (verified count logged) | secrets / keys / tokens; synthetic hashes allow-listed |
 | `git grep` working-tree guard | HEAD | `AUTH_PASSWORD_HASH=`, real-looking PBKDF2 hash, `BEGIN … PRIVATE KEY` |
-| `scripts/check-pii-history.mjs` | full history | free-mail addresses; DFBnet export column headers (`Spielrecht ab`, `Reg. am`, …) outside test paths |
+| `scripts/check-pii-history.mjs` | full history, **test fixtures included** | free-mail addresses; DFBnet export rows whose birthdate/pass-number/name don't follow the synthetic convention |
 
 `check-pii-history.mjs` keeps an `ACKNOWLEDGED` list: reviewed findings are
-printed as a notice but do not fail the build. New findings fail.
+printed as a notice but do not fail the build. New findings fail. As of
+2026-09-04 the gitleaks invocation was changed from the `gitleaks-action@v2`
+default (which silently scanned only the single pushed commit —
+`--log-opts=-1` — despite `fetch-depth: 0`) to an explicit CLI call that
+walks every reachable commit on every ref; the PII scanner's former blanket
+exemption for `*.test.ts` / `cloudflare/test/**` / `tests/**` was removed at
+the same time and replaced with a content-based synthetic-fixture classifier
+(see the script for the exact rule). That change is what surfaced the
+incident below.
 
-## Assessed findings (2026-09-04, full history, HEAD `5bac35b`)
+## Assessed findings (2026-09-04, full history including test fixtures, HEAD `1a3f71f`)
 
 | Finding | Locations | Assessment | Action |
 | --- | --- | --- | --- |
-| Repo owner's own address `dominik87hahn@gmail.com` | `wrangler.jsonc`, `worker-configuration.d.ts`, early `cloudflare/test/*` in commits `543622438d`, `4cc31c8459`, `3199a50af9`, `5495dde390`, `f88dfe433e` (removed from HEAD) | Self-published address of the sole maintainer; not third-party data; no special-category data; not a credential | **Accepted.** Listed in `ACKNOWLEDGED`. History rewrite optional (see below); no urgency. |
+| Repo owner's own address `dominik87hahn@gmail.com` | `wrangler.jsonc`, `worker-configuration.d.ts`, early `cloudflare/test/*` | Self-published address of the sole maintainer; not third-party data; no special-category data; not a credential | **Accepted.** Listed in `ACKNOWLEDGED`. History rewrite optional; no urgency. |
 | Test PBKDF2 hashes (`0…0` dummy, `0101…` salt) and `unit-test-session-secret-…` | many `*.test.ts`, `scripts/hash-password.mjs` | Synthetic; password/secret value is public and worthless | **Accepted.** Allow-listed in `.gitleaks.toml`. |
 | Real production password hash | — | **Never committed.** Lives only in D1 `users`. | none |
-| DFBnet birth dates / pass numbers of real people | — | **None found.** All fixtures follow the `0100-000x` / synthetic-name convention. | none |
+| **Real DFBnet roster data (3 real minors' first/last names, birthdates and pass numbers, plus a real club name) in `src/dfbnet.test.ts` and `tests/features.spec.ts`** | Introduced 2026-09-03, superseded the same evening by the current `Max Testspieler` / `Anna Beispiel` / `Kim Musterkind` fixture, but the real data remained reachable in the superseded commits until this incident was found and fixed on 2026-09-04. **Confirmed real by the repo owner.** | **Confirmed real. Incident.** History rewritten (`git filter-repo --replace-text`, mapping the exact real rows to the standard synthetic fixture) and force-pushed to `main`. See "Incident 2026-09-04" below. | **Done.** No further data in scope; no credential involved so no key/token rotation needed. |
 
-No secrets were exposed, so **no credential rotation is required**. If a future
-finding involves a real secret, rotate it first (before any history rewrite):
-Cloudflare API tokens in the account dashboard, `wrangler secret put …` for
-worker secrets, session invalidation via `sessions` table truncation.
+No secrets were exposed by the gitleaks/credential checks, so no credential
+rotation is required for that class of finding. If a future finding involves
+a real secret, rotate it first (before any history rewrite): Cloudflare API
+tokens in the account dashboard, `wrangler secret put …` for worker secrets,
+session invalidation via `sessions` table truncation.
+
+## Incident 2026-09-04 — real DFBnet fixture data in history
+
+**What happened:** while building the DFBnet CSV import feature, a real
+DFBnet roster export (three players' full names, birthdates and pass
+numbers, and the real club name) was used directly as a test fixture in
+`src/dfbnet.test.ts` and `tests/features.spec.ts` instead of synthetic data.
+It was replaced with the proper `Max Testspieler` convention in the very
+next commit that day, but the earlier commits carrying the real data stayed
+reachable in Git history — and this is a **public** repository.
+
+**How it was found:** broadening `check-pii-history.mjs` to scan test
+fixtures (this session's own CI-hardening work) surfaced the DFBnet-header
+hit; inspecting the flagged commits showed a real-looking name/date/pass-
+number combination that didn't fit the documented synthetic convention. The
+repo owner confirmed it was real data from an actual club, not fabricated.
+
+**Exposure window:** from whichever push first published commit `191cfe1`
+("feat: DFBnet roster CSV import", pre-rewrite hash `3199a50af9`) to
+2026-09-04 when the rewrite below was force-pushed. Single-maintainer repo,
+no known forks or external clones as of this assessment — but per the
+standing rule below, the repository being public means the data must be
+treated as potentially disclosed for the full window regardless.
+
+**Remediation performed:**
+
+1. Scoped the exact blobs/commits via `git log --all -S'<row>' -- <path>` —
+   confined to two commits (pre-rewrite hashes `3199a50af9`, `5495dde390`),
+   two files.
+2. `git filter-repo --replace-text` with an exact literal mapping from each
+   real row (name, birthdate, pass number, filename, club name) to the
+   project's standard synthetic fixture (`Max Testspieler` /
+   `0100-0001` / `01.01.2014` / `FC Beispielstadt` etc.) — commits and
+   messages preserved, only the affected file content at that point in
+   history changed.
+3. Verified post-rewrite: `check-pii-history.mjs` clean, `gitleaks` full
+   history scan clean, all commits searched for the real name/pass-number
+   strings return no hits, full test suite green.
+4. Force-pushed the rewritten `main` (branch protection's "no force push"
+   was temporarily disabled by the repo owner for this push, then
+   re-enabled immediately after).
+5. Deleted the local pre-rewrite clone that had been kept as a rollback
+   backup, once the rewrite was verified — removing the last copy of the
+   real data this session had access to.
+
+**No credential rotation needed** (no secret/credential was involved).
+**No GDPR Art. 33/34 controller notification assessment performed here** —
+this is a developer-fixture incident involving a small number of players
+from what appears to be the repo owner's own club context; the repo owner
+should independently judge whether that club/association needs to be
+informed, since only they have that relationship and context. This document
+intentionally does not restate the real names/dates/pass numbers anywhere,
+including in this incident record.
+
+**Residual risk:** GitHub does not guarantee immediate garbage-collection of
+unreachable objects after a force-push, and any clone or fork made during
+the exposure window (none known) would retain the old objects regardless of
+this rewrite. Treat the data as disclosed for the exposure window stated
+above; this rewrite prevents further/future disclosure, it does not undo
+past access.
 
 ## If a real removal is ever justified
 
