@@ -5,14 +5,18 @@ import { Icon } from "./icons";
 import { LegacyMigrationPanel } from "./LegacyMigrationPanel";
 import { ageGroups } from "./match";
 import {
+  acceptInvitation,
   createTeamUnit,
   createTenant,
   fetchLegacy,
   fetchMe,
   fetchTeams,
   fetchTenantIndex,
+  invitationToken,
   pushTenantData,
+  viewInvitation,
   type CloudData,
+  type InvitationPreview,
 } from "./sync";
 import { scopeKey, type TeamUnit, type TenantMeta } from "./tenant";
 
@@ -38,6 +42,10 @@ export function TenantGate({ rememberedId, onUnlock }: Props) {
   const [club, setClub] = useState<TenantMeta | null>(null);
   const [teams, setTeams] = useState<TeamUnit[]>([]);
   const [team, setTeam] = useState<TeamUnit | null>(null);
+
+  // onboarding: accept an invitation
+  const [inviteInput, setInviteInput] = useState("");
+  const [invitePreview, setInvitePreview] = useState<InvitationPreview | null>(null);
 
   // onboarding / create-team form
   const [newClubName, setNewClubName] = useState("");
@@ -119,6 +127,39 @@ export function TenantGate({ rememberedId, onUnlock }: Props) {
     await chooseClub(created, takeLegacy && legacy ? legacy : null);
   };
 
+  const previewInviteFlow = async (): Promise<void> => {
+    const token = invitationToken(inviteInput);
+    if (token.length < 20) { setError("Bitte den vollständigen Einladungslink oder -code eingeben."); return; }
+    setBusy(true);
+    setError(null);
+    const preview = await viewInvitation(token);
+    setBusy(false);
+    if (!preview) { setInvitePreview(null); setError("Diese Einladung ist ungültig oder abgelaufen."); return; }
+    setInvitePreview(preview);
+  };
+
+  const acceptInviteFlow = async (): Promise<void> => {
+    const token = invitationToken(inviteInput);
+    setBusy(true);
+    setError(null);
+    const result = await acceptInvitation(token);
+    if (!result.ok) {
+      setBusy(false);
+      setError(result.status === 403 ? "Diese Einladung wurde für eine andere E-Mail-Adresse ausgestellt."
+        : result.status === 409 ? "Du bist bereits Mitglied dieses Vereins."
+        : "Die Einladung konnte nicht angenommen werden.");
+      return;
+    }
+    const list = await fetchTenantIndex();
+    setBusy(false);
+    if (!list || list.length === 0) { setError("Sitzung abgelaufen. Bitte melde dich erneut an."); setStep("error"); return; }
+    setClubs(list);
+    setInviteInput("");
+    setInvitePreview(null);
+    const joined = invitePreview ? list.find((entry) => entry.name === invitePreview.clubName) : undefined;
+    void chooseClub(joined ?? list[list.length - 1], null);
+  };
+
   const createTeamFlow = async (): Promise<void> => {
     if (!club) return;
     if (!newTeamName.trim()) { setError("Bitte einen Mannschaftsnamen eingeben."); return; }
@@ -198,6 +239,13 @@ export function TenantGate({ rememberedId, onUnlock }: Props) {
           {legacy && <label className="tenant-check"><input type="checkbox" checked={takeLegacy} onChange={(event) => setTakeLegacy(event.target.checked)} /><span>Daten aus der alten Version in die erste Mannschaft übernehmen</span></label>}
           {error && <div className="tenant-error" role="alert">{error}</div>}
           <button className="tenant-primary" disabled={busy}><Icon name="check" /> Verein anlegen</button>
+
+          <div className="tenant-divider"><span>oder</span></div>
+          <label><span>Einladungslink / -code</span><input value={inviteInput} maxLength={512} onChange={(event) => { setInviteInput(event.target.value); setInvitePreview(null); }} placeholder="https://squora.de/schiedsrichter-note/?invite=…" /></label>
+          {invitePreview && <p className="tenant-hint">Einladung zu <strong>{invitePreview.clubName}</strong>{invitePreview.teamName ? ` · ${invitePreview.teamName}` : ""} als <strong>{invitePreview.role}</strong>.</p>}
+          {invitePreview
+            ? <button type="button" className="tenant-primary" disabled={busy} onClick={() => void acceptInviteFlow()}><Icon name="check" /> Einladung annehmen</button>
+            : <button type="button" className="tenant-link" disabled={busy || inviteInput.trim().length < 20} onClick={() => void previewInviteFlow()}><Icon name="shield" /> Einladung prüfen</button>}
         </>}
 
         {step === "club" && <>

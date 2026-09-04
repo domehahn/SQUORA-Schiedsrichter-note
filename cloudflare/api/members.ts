@@ -1,12 +1,11 @@
 import type { AuthContext } from "../auth/session";
 import { isRole, type Role } from "../auth/roles";
 import { HttpError, json, readJson, requireSameOrigin } from "../core/http";
-import { isId, newId } from "../core/id";
-import { objectValue, stringValue } from "../core/validation";
+import { isId } from "../core/id";
+import { objectValue } from "../core/validation";
 import { denyTeamScoped, requireTenantAccess } from "../middleware/tenant";
 import { writeAudit } from "../services/audit-service";
 
-const DUMMY_HASH = "pbkdf2-sha256$100000*6$00000000000000000000000000000000$0000000000000000000000000000000000000000000000000000000000000000";
 type MembershipStatus = "invited" | "active" | "suspended" | "removed";
 
 function membershipStatus(value: unknown): value is MembershipStatus {
@@ -48,31 +47,10 @@ export async function listMembers(request: Request, env: Env, auth: AuthContext,
   return json({ members, nextCursor: result.results.length > limit ? members.at(-1)?.userId ?? null : null }, requestId);
 }
 
-export async function inviteMember(request: Request, env: Env, auth: AuthContext, clubId: string, requestId: string): Promise<Response> {
-  requireSameOrigin(request);
-  const context = await managerContext(env, auth, clubId);
-  const body = objectValue(await readJson(request, 16_384));
-  const email = stringValue(body, "email", { min: 3, max: 254 })!.toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email)) throw new HttpError(422, "VALIDATION_FAILED", "The request data is invalid.");
-  const displayName = stringValue(body, "displayName", { min: 1, max: 120 })!;
-  const role = body.role;
-  if (!isRole(role) || role === "club_owner") throw new HttpError(422, "VALIDATION_FAILED", "The request data is invalid.");
-  const teamId = await validateTeam(env.DB, context.clubId, body.teamId);
-  const now = new Date().toISOString();
-  let user = await env.DB.prepare("SELECT id,status FROM users WHERE email=?").bind(email).first<{ id: string; status: string }>();
-  if (!user) {
-    user = { id: newId(), status: "invited" };
-    await env.DB.prepare("INSERT INTO users (id,email,display_name,password_hash,status,created_at,updated_at) VALUES (?,?,?,?, 'invited',?,?)")
-      .bind(user.id, email, displayName, DUMMY_HASH, now, now).run();
-  }
-  const existing = await env.DB.prepare("SELECT status FROM memberships WHERE club_id=? AND user_id=?").bind(context.clubId, user.id).first();
-  if (existing) throw new HttpError(409, "MEMBERSHIP_EXISTS", "A membership already exists for this account.");
-  const status: MembershipStatus = user.status === "active" ? "active" : "invited";
-  await env.DB.prepare("INSERT INTO memberships (club_id,user_id,role,status,created_at,updated_at,team_id) VALUES (?,?,?,?,?,?,?)")
-    .bind(context.clubId, user.id, role, status, now, now, teamId).run();
-  await writeAudit(env.DB, { clubId: context.clubId, userId: auth.userId, action: "MEMBER_INVITED", entityType: "membership", entityId: user.id, metadata: { role, teamScoped: Boolean(teamId) } });
-  return json({ member: { userId: user.id, email, displayName, role, status, teamId } }, requestId, 201);
-}
+// Inviting someone is handled entirely by `api/invitations.ts`: a random-token
+// invitation is created; no membership and no user row exist until the invitee
+// proves token possession by accepting. An existing account is never silently
+// added to a club.
 
 export async function updateMember(request: Request, env: Env, auth: AuthContext, clubId: string, userId: string, requestId: string): Promise<Response> {
   requireSameOrigin(request);

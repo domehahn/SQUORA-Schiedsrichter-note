@@ -1,20 +1,16 @@
 import { pbkdf2, randomBytes } from "node:crypto";
 
-// Must match cloudflare/auth/password.ts: the Workers runtime caps a single
-// PBKDF2 call at 100 000 iterations, so the work factor comes from chaining.
-const ROUND_ITERATIONS = 100_000;
-const ROUNDS = 6;
+// Emits the currently preferred hash format for cloudflare/auth/password.ts:
+//   pbkdf2-sha256$i=<iterations>$<saltHex>$<hashHex>
+// Single-call PBKDF2-HMAC-SHA256. Node has no per-call iteration cap; the
+// Workers runtime verifies this format via node:crypto (nodejs_compat).
+const ITERATIONS = 600_000;
+const KEY_BYTES = 32;
 const MIN_PASSWORD_LENGTH = 12;
 
-const pbkdf2Async = (material, salt) => new Promise((resolve, reject) => {
-  pbkdf2(material, salt, ROUND_ITERATIONS, 32, "sha256", (error, derived) => (error ? reject(error) : resolve(derived)));
+const pbkdf2Async = (password, salt) => new Promise((resolve, reject) => {
+  pbkdf2(password, salt, ITERATIONS, KEY_BYTES, "sha256", (error, derived) => (error ? reject(error) : resolve(derived)));
 });
-
-async function deriveChained(password, salt) {
-  let material = Buffer.from(password, "utf8");
-  for (let round = 0; round < ROUNDS; round += 1) material = await pbkdf2Async(material, salt);
-  return material;
-}
 
 function readHiddenPassword() {
   if (!process.stdin.isTTY) {
@@ -44,7 +40,8 @@ function readHiddenPassword() {
     };
     const handleInput = (chunk) => {
       for (const character of chunk) {
-        if (character === "\u0003") {
+        const code = character.charCodeAt(0);
+        if (code === 3) { // Ctrl-C
           cleanup();
           reject(new Error("Abgebrochen"));
           return;
@@ -53,7 +50,7 @@ function readHiddenPassword() {
           finish();
           return;
         }
-        if (character === "\u007f") {
+        if (code === 8 || code === 127) { // Backspace / DEL
           value = value.slice(0, -1);
         } else {
           value += character;
@@ -65,9 +62,9 @@ function readHiddenPassword() {
 }
 
 const password = await readHiddenPassword();
-if (password.length < MIN_PASSWORD_LENGTH || password.length > 200) {
-  throw new Error(`Passwort muss zwischen ${MIN_PASSWORD_LENGTH} und 200 Zeichen lang sein`);
+if (password.length < MIN_PASSWORD_LENGTH || password.length > 1024) {
+  throw new Error(`Passwort muss zwischen ${MIN_PASSWORD_LENGTH} und 1024 Zeichen lang sein`);
 }
 const salt = randomBytes(16);
-const hash = await deriveChained(password, salt);
-process.stdout.write(`pbkdf2-sha256$${ROUND_ITERATIONS}*${ROUNDS}$${salt.toString("hex")}$${hash.toString("hex")}`);
+const hash = await pbkdf2Async(Buffer.from(password, "utf8"), salt);
+process.stdout.write(`pbkdf2-sha256$i=${ITERATIONS}$${salt.toString("hex")}$${hash.toString("hex")}`);

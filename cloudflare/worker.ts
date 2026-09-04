@@ -1,9 +1,10 @@
 import { listClubs, createClub, getClub, deleteClub, cancelClubDeletion } from "./api/clubs";
 import { deleteAccount } from "./api/account";
 import { exportClub } from "./api/export";
-import { login, logout, me } from "./api/auth";
+import { login, logout, me, register } from "./api/auth";
+import { acceptInvitation, createInvitation, listInvitations, revokeInvitation, viewInvitation } from "./api/invitations";
 import { createMatch, deleteMatch, getMatch, listMatches, updateMatch } from "./api/matches";
-import { inviteMember, listMembers, removeMember, updateMember } from "./api/members";
+import { listMembers, removeMember, updateMember } from "./api/members";
 import { listLegacyTenants, migrateLegacy, readLegacyPayload } from "./api/legacy-migration";
 import { getState, putState } from "./api/state";
 import { createTeam, listTeams } from "./api/teams";
@@ -96,11 +97,24 @@ async function routeAuthenticated(request: Request, env: Env, auth: AuthContext,
     if (request.method === "POST") return cancelClubDeletion(request, env, auth, decodeURIComponent(clubCancelDeletion[1]), requestId);
     return methodNotAllowed();
   }
+  if (path === "/api/v1/invitations/accept" && request.method === "POST") return acceptInvitation(request, env, auth, requestId);
   const members = path.match(/^\/api\/v1\/clubs\/([^/]+)\/members$/u);
   if (members) {
     const clubId = decodeURIComponent(members[1]);
     if (request.method === "GET") return listMembers(request, env, auth, clubId, requestId);
-    if (request.method === "POST") return inviteMember(request, env, auth, clubId, requestId);
+    if (request.method === "POST") return createInvitation(request, env, auth, clubId, requestId);
+    return methodNotAllowed();
+  }
+  const invitations = path.match(/^\/api\/v1\/clubs\/([^/]+)\/invitations$/u);
+  if (invitations) {
+    const clubId = decodeURIComponent(invitations[1]);
+    if (request.method === "GET") return listInvitations(request, env, auth, clubId, requestId);
+    if (request.method === "POST") return createInvitation(request, env, auth, clubId, requestId);
+    return methodNotAllowed();
+  }
+  const invitation = path.match(/^\/api\/v1\/clubs\/([^/]+)\/invitations\/([^/]+)$/u);
+  if (invitation) {
+    if (request.method === "DELETE") return revokeInvitation(request, env, auth, decodeURIComponent(invitation[1]), decodeURIComponent(invitation[2]), requestId);
     return methodNotAllowed();
   }
   const member = path.match(/^\/api\/v1\/clubs\/([^/]+)\/members\/([^/]+)$/u);
@@ -195,8 +209,11 @@ export default {
     let auth: AuthContext | null = null;
     let response: Response;
     try {
+      const publicInvite = path.match(/^\/api\/v1\/invitations\/([^/]+)$/u);
       if (path === "/auth/login" && request.method === "POST") response = await formLogin(request, env, requestId);
       else if (path === "/api/v1/auth/login" && request.method === "POST") response = await login(request, env, requestId);
+      else if (path === "/api/v1/auth/register" && request.method === "POST") response = await register(request, env, requestId);
+      else if (publicInvite && request.method === "GET") response = await viewInvitation(request, env, decodeURIComponent(publicInvite[1]), requestId);
       else if (request.method === "GET" && (PUBLIC_ASSETS.has(path) || path.startsWith("/workbox-"))) {
         response = withHeaders(await env.ASSETS.fetch(new Request(new URL(path, url.origin), request)), requestId);
       } else {

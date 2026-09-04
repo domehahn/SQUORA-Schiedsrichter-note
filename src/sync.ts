@@ -94,6 +94,38 @@ export async function createTenant(name: string): Promise<TenantMeta | null> {
   } catch { return null; }
 }
 
+// ---- invitations ----------------------------------------------------------
+
+export interface InvitationPreview { clubName: string; role: string; teamName: string | null; expiresAt: string }
+
+/** Pull a bare token out of a pasted invitation link or return the trimmed input. */
+export function invitationToken(input: string): string {
+  const trimmed = input.trim();
+  const match = trimmed.match(/invitations?\/([A-Za-z0-9_-]{20,64})/) ?? trimmed.match(/[?&]invite=([A-Za-z0-9_-]{20,64})/);
+  return match ? match[1] : trimmed;
+}
+
+export async function viewInvitation(token: string): Promise<InvitationPreview | null> {
+  try {
+    const response = await fetch(`${API}/invitations/${enc(token)}`, { headers: { Accept: "application/json" } });
+    if (!response.ok) return null;
+    const body = await response.json() as { invitation?: Record<string, unknown> };
+    const invite = body.invitation;
+    return invite && typeof invite.clubName === "string" && typeof invite.expiresAt === "string"
+      ? { clubName: invite.clubName, role: typeof invite.role === "string" ? invite.role : "", teamName: typeof invite.teamName === "string" ? invite.teamName : null, expiresAt: invite.expiresAt }
+      : null;
+  } catch { return null; }
+}
+
+export async function acceptInvitation(token: string): Promise<{ ok: boolean; status: number }> {
+  try {
+    const response = await fetch(`${API}/invitations/accept`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }),
+    });
+    return { ok: response.ok, status: response.status };
+  } catch { return { ok: false, status: 0 }; }
+}
+
 export async function fetchTeams(clubId: string): Promise<TeamUnit[] | null> {
   try {
     const response = await fetch(teamsUrl(clubId), { headers: { Accept: "application/json" } });

@@ -14,9 +14,10 @@
       "migrations_dir": "migrations"
     }
   ],
-  "kv_namespaces": [
-    { "binding": "LEGACY_DATA", "id": "cc85a29c39484d0aaee95baf5e0311d3" }
-  ],
+  // No kv_namespaces: the KV -> D1 migration is complete and the legacy blobs
+  // were deleted on 2026-09-04. The LEGACY_DATA-backed routes are guarded
+  // (`if (!env.LEGACY_DATA)`) and now return empty. Re-add a binding only if a
+  // fresh legacy import is ever needed.
   "ratelimits": [
     { "name": "LOGIN_RATE_LIMITER", "namespace_id": "2026090301", "simple": { "limit": 10, "period": 60 } },
     { "name": "EXPORT_RATE_LIMITER", "namespace_id": "2026090311", "simple": { "limit": 5, "period": 60 } },

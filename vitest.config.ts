@@ -18,6 +18,10 @@ export default defineConfig({
         bindings: {
           TEST_MIGRATIONS: migrations,
         },
+        // Production no longer binds LEGACY_DATA (KV → D1 migration complete,
+        // blobs deleted). The migration code is still guarded and tested, so
+        // give the test runtime a throwaway KV namespace to exercise it.
+        kvNamespaces: ["LEGACY_DATA"],
       },
     }),
   ],
