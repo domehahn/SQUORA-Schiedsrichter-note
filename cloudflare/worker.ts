@@ -9,7 +9,7 @@ import { listLegacyTenants, migrateLegacy, readLegacyPayload } from "./api/legac
 import { getState, putState } from "./api/state";
 import { createTeam, listTeams } from "./api/teams";
 import { confirmDfbnetImport, createDfbnetImport, listDfbnetImports } from "./api/dfbnet";
-import { createPlayer, deletePlayer, listPlayers, updatePlayer } from "./api/players";
+import { clearPlayers, createPlayer, deletePlayer, listPlayers, updatePlayer } from "./api/players";
 import { requireAuth, type AuthContext } from "./auth/session";
 import { errorResponse, HttpError, recordRequest, SECURITY_HEADERS, withHeaders } from "./core/http";
 import { readLegacy } from "./legacy/kv-migration";
@@ -167,6 +167,7 @@ async function routeAuthenticated(request: Request, env: Env, auth: AuthContext,
     const teamId = decodeURIComponent(players[2]);
     if (request.method === "GET") return listPlayers(env, auth, clubId, teamId, requestId);
     if (request.method === "POST") return createPlayer(request, env, auth, clubId, teamId, requestId);
+    if (request.method === "DELETE") return clearPlayers(request, env, auth, clubId, teamId, requestId);
     return methodNotAllowed();
   }
   const player = path.match(/^\/api\/v1\/clubs\/([^/]+)\/teams\/([^/]+)\/players\/([^/]+)$/u);

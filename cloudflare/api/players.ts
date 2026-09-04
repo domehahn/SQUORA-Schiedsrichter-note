@@ -98,6 +98,16 @@ export async function updatePlayer(request: Request, env: Env, auth: AuthContext
   return json({ player: { id: playerId, firstName, lastName, name, shirtNumber: opt(body.shirtNumber), passNumber: opt(body.passNumber), birthdate, version: (body.version as number) + 1, updatedAt: now } }, requestId);
 }
 
+/** Remove every player from the team's roster in one call (explicit "clear roster" action). */
+export async function clearPlayers(request: Request, env: Env, auth: AuthContext, clubId: string, teamId: string, requestId: string): Promise<Response> {
+  requireSameOrigin(request);
+  const context = await requireTeamAccess(env.DB, auth, clubId, teamId, "players.manage");
+  const result = await env.DB.prepare("DELETE FROM players WHERE club_id=? AND team_id=?").bind(context.clubId, context.teamId).run();
+  const removed = result.meta.changes ?? 0;
+  await writeAudit(env.DB, { clubId: context.clubId, userId: auth.userId, action: "PLAYER_ROSTER_CLEARED", entityType: "team", entityId: context.teamId, metadata: { teamId: context.teamId, removed } });
+  return json({ ok: true, removed }, requestId);
+}
+
 export async function deletePlayer(request: Request, env: Env, auth: AuthContext, clubId: string, teamId: string, playerId: string, requestId: string): Promise<Response> {
   requireSameOrigin(request);
   const context = await requireTeamAccess(env.DB, auth, clubId, teamId, "players.manage");

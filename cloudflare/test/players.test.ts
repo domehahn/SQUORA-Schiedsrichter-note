@@ -1,6 +1,6 @@
 import { env, SELF } from "cloudflare:test";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { CLUB_A, CLUB_B, TEAM_A, TEAM_B, USER_A, ORIGIN, jsonHeaders, migrate, resetDb, seedTwoTenants } from "./helpers";
+import { CLUB_A, CLUB_B, TEAM_A, TEAM_A2, TEAM_B, USER_A, ORIGIN, jsonHeaders, migrate, resetDb, seedTwoTenants } from "./helpers";
 
 const url = (club: string, team: string, suffix = "") => `${ORIGIN}/api/v1/clubs/${club}/teams/${team}/players${suffix}`;
 
@@ -26,6 +26,29 @@ describe("team roster (players) CRUD", () => {
 
     expect((await SELF.fetch(url(CLUB_A, TEAM_A, `/${player.id}`), { method: "DELETE", headers: jsonHeaders(cookieA), body: JSON.stringify({ version: 2 }) })).status).toBe(200);
     expect((await (await SELF.fetch(url(CLUB_A, TEAM_A), { headers: { Cookie: cookieA } })).json<{ players: unknown[] }>()).players).toHaveLength(0);
+  });
+
+  it("clears the whole roster in one call, scoped to the team, with an audit row", async () => {
+    const { cookieA } = await seedTwoTenants();
+    for (const name of ["Anna Beispiel", "Kim Musterkind"]) {
+      await SELF.fetch(url(CLUB_A, TEAM_A), { method: "POST", headers: jsonHeaders(cookieA), body: JSON.stringify({ name }) });
+    }
+    await SELF.fetch(url(CLUB_A, TEAM_A2), { method: "POST", headers: jsonHeaders(cookieA), body: JSON.stringify({ name: "Sibling Player" }) });
+
+    const cleared = await SELF.fetch(url(CLUB_A, TEAM_A), { method: "DELETE", headers: jsonHeaders(cookieA) });
+    expect(cleared.status).toBe(200);
+    expect((await cleared.json<{ removed: number }>()).removed).toBe(2);
+    expect((await (await SELF.fetch(url(CLUB_A, TEAM_A), { headers: { Cookie: cookieA } })).json<{ players: unknown[] }>()).players).toHaveLength(0);
+    // sibling team is untouched
+    expect((await (await SELF.fetch(url(CLUB_A, TEAM_A2), { headers: { Cookie: cookieA } })).json<{ players: unknown[] }>()).players).toHaveLength(1);
+    expect((await env.DB.prepare("SELECT count(*) AS n FROM audit_log WHERE action='PLAYER_ROSTER_CLEARED'").first<{ n: number }>())?.n).toBe(1);
+  });
+
+  it("clear roster: no cross-club access, viewer cannot", async () => {
+    const { cookieA } = await seedTwoTenants();
+    expect((await SELF.fetch(url(CLUB_B, TEAM_B), { method: "DELETE", headers: jsonHeaders(cookieA) })).status).toBe(404);
+    await env.DB.prepare("UPDATE memberships SET role='viewer' WHERE club_id=? AND user_id=?").bind(CLUB_A, USER_A).run();
+    expect((await SELF.fetch(url(CLUB_A, TEAM_A), { method: "DELETE", headers: jsonHeaders(cookieA) })).status).toBe(403);
   });
 
   it("is team-scoped: no cross-club access, viewer cannot mutate", async () => {

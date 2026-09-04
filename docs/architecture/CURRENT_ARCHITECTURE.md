@@ -121,7 +121,7 @@ fingerprint, `dfbnet_imports` record, `DFBNET_IMPORT_*` audit, idempotent player
 upsert with `mode: merge | replace` (replace reconciles the roster). Rate-limited
 (`IMPORT_RATE_LIMITER`). Original CSV never stored or logged. The "Mein Kader"
 panel drives this endpoint for the referee's own team; `players` also has
-`GET/POST/PATCH/DELETE` CRUD (`api/players.ts`, team-scoped, optimistic-locked).
+`GET/POST/PATCH/DELETE` CRUD plus `DELETE …/players` to clear the whole roster (`api/players.ts`, team-scoped, optimistic-locked, `PLAYER_*` audit).
 
 ## Security headers & error shape
 
@@ -133,7 +133,7 @@ structured line.
 
 ## Quality baseline
 
-- Unit: 36 · Worker (Miniflare + D1 `0001–0019`): 86 · e2e (Playwright): 19
+- Unit: 36 · Worker (Miniflare + D1 `0001–0019`): 88 · e2e (Playwright): 19
   (+1 skipped) · real-Worker e2e: 5 · build + lint + `npm audit --audit-level=high`:
   clean.
 - CI: `.github/workflows/ci.yml` (quality, e2e, e2e-worker, security, CodeQL;

@@ -3,7 +3,7 @@ import { Icon } from "./icons";
 import { parseDfbnetExternal, type ExternalRosterEntry } from "./dfbnet";
 import { readCsvFile } from "./integrations/dfbnet/decode";
 import {
-  createPlayer, deletePlayer, fetchDfbnetImports, fetchPlayers, pushDfbnetRoster, updatePlayer,
+  clearPlayers, createPlayer, deletePlayer, fetchDfbnetImports, fetchPlayers, pushDfbnetRoster, updatePlayer,
   type DfbnetImportRow, type PlayerInput, type RosterPlayer,
 } from "./sync";
 
@@ -95,6 +95,17 @@ export function TeamRosterPanel({ clubId, teamId, teamName, onCopyToLibrary, onC
     setPlayers((list) => list.filter((entry) => entry.id !== player.id));
   };
 
+  const clearRoster = async () => {
+    if (!window.confirm(`Wirklich alle ${players.length} Spieler aus „${teamName}" löschen? Das lässt sich nicht rückgängig machen.`)) return;
+    setBusy(true);
+    setError(null);
+    const ok = await clearPlayers(clubId, teamId);
+    setBusy(false);
+    if (!ok) { setError("Der Kader konnte nicht geleert werden."); await reload(); return; }
+    setPlayers([]);
+    flash("Kader geleert.");
+  };
+
   const onCsv = async (file: File) => {
     setError(null);
     try {
@@ -165,6 +176,7 @@ export function TeamRosterPanel({ clubId, teamId, teamName, onCopyToLibrary, onC
             if (file) void onCsv(file);
             event.target.value = "";
           }} />
+          {players.length > 0 && <button className="text-button danger" disabled={busy} onClick={() => void clearRoster()}><Icon name="trash" /> Kader leeren</button>}
         </div>
 
         {players.length > 0 && (

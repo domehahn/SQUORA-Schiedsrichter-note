@@ -226,6 +226,13 @@ export async function updatePlayer(clubId: string, teamId: string, id: string, i
   } catch { return null; }
 }
 
+export async function clearPlayers(clubId: string, teamId: string): Promise<boolean> {
+  try {
+    const response = await fetch(playersUrl(clubId, teamId), { method: "DELETE", headers: { "Content-Type": "application/json" } });
+    return response.ok;
+  } catch { return false; }
+}
+
 export async function deletePlayer(clubId: string, teamId: string, id: string, version: number): Promise<boolean> {
   try {
     const response = await fetch(`${playersUrl(clubId, teamId)}/${enc(id)}`, {
