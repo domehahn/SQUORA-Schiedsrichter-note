@@ -38,7 +38,7 @@ gaps noted · **open** not started.
 | 29 — Security headers | done | `SECURITY_HEADERS` + CSP without `unsafe-inline` (`script-src 'self'`), HSTS, COOP/COEP/CORP, Permissions-Policy, `frame-ancestors 'none'`. |
 | 30 — Service worker security | done | Vite PWA `NetworkOnly` for `/api/*` and `/auth/*`; `verify-service-worker.mjs` asserts generated output and runs in CI. |
 | 31 — Import / export hardening | partial | `core/validation.ts` now has a declarative `parseBody(value, spec)` that rejects undeclared fields (422 `UNKNOWN_FIELD`); adopted in createTeam / createClub / deleteClub / deleteAccount. Snapshot endpoints still on the primitives — incremental rollout. |
-| 32 — Repository architecture | partial | Worker split into layers. `src/App.tsx` shrinking — `RosterEditor` extracted; TournamentPanel / TeamLibraryPanel / StatsPanel next. |
+| 32 — Repository architecture | partial | Worker split into layers. `src/App.tsx` 1780 → ~1260: RosterEditor, TournamentPanel, TournamentReport, TeamLibraryPanel, StatsPanel, MetaPanel, CollapsibleSection, TeamActions, SessionExpiredModal and the download helpers extracted to `panels.tsx` / `RosterEditor.tsx` / `download.ts`. No worker `repositories/` layer yet. |
 | 33 — Legacy KV migration | done | Explicit opt-in UI plus authenticated list/read/migrate API; source fingerprint verification, idempotency, D1 marker and audits; source remains intact. |
 | 34 — Tenant-model migration | done | `legacy_migrations` stores verified `user + legacyTenantId → club + team`; foreign targets and remapping are rejected and tested. |
 | 35 — Repository security | done | CI secret guard; no secrets tracked; fixtures synthetic. |
