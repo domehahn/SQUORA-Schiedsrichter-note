@@ -33,6 +33,8 @@ jobs:
         run: npm run lint
       - name: Build (tsc -b + vite)
         run: npm run build
+      - name: Verify service-worker cache policy
+        run: node scripts/verify-service-worker.mjs
       - name: Unit tests
         run: npm run test:unit
       - name: Worker tests (Miniflare + D1 migrations)
