@@ -113,6 +113,35 @@ describe("match isolation and optimistic locking", () => {
     expect(JSON.parse(audit.results[1].m).changedMatches).toBe(2); // B + C, not A
   });
 
+  it("applies a delta sync: only the listed rows are touched, nothing swept", async () => {
+    const { cookieA } = await seedTwoTenants();
+    const url = `${ORIGIN}/api/v1/clubs/${CLUB_A}/teams/${TEAM_A}/state`;
+    const recent = new Date().toISOString().slice(0, 10);
+    const sm = (id: string, note = "") => ({ savedAt: `${recent}T10:00:00Z`, state: { id, phase: "finished", matchDate: recent, meta: { venue: note }, events: [] } });
+    const A = "aaaaaaaa-9999-4999-8999-aaaaaaaaaaaa";
+    const B = "bbbbbbbb-9999-4999-8999-bbbbbbbbbbbb";
+    const C = "cccccccc-9999-4999-8999-cccccccccccc";
+
+    // full snapshot -> A, B
+    await SELF.fetch(url, { method: "PUT", headers: jsonHeaders(cookieA), body: JSON.stringify({ version: 0, archive: [sm(A), sm(B)], deletedIds: [], tournaments: [], teams: [], current: null }) });
+
+    // delta at version 1: change B, remove A, add C, leave (implicit) nothing else
+    const res = await SELF.fetch(url, { method: "PUT", headers: jsonHeaders(cookieA), body: JSON.stringify({
+      version: 1, delta: true,
+      matches: { upsert: [sm(B, "Platz 2"), sm(C)], removeIds: [A] },
+      tournaments: { upsert: [], removeIds: [] },
+    }) });
+    expect(res.status).toBe(200);
+
+    const rows = await env.DB.prepare("SELECT id,version FROM matches WHERE club_id=? AND team_id=? ORDER BY id").bind(CLUB_A, TEAM_A).all<{ id: string; version: number }>();
+    expect(rows.results.map((r) => r.id)).toEqual([B, C]); // A removed, C added
+    expect(rows.results.find((r) => r.id === B)?.version).toBe(2); // B rewritten
+    const audit = await env.DB.prepare("SELECT metadata_json AS m FROM audit_log WHERE action='TEAM_STATE_SYNCED' ORDER BY created_at DESC").first<{ m: string }>();
+    const meta = JSON.parse(audit!.m);
+    expect(meta.mode).toBe("delta");
+    expect(meta.removedMatches).toBe(1);
+  });
+
   it("sheds archived matches older than the retained season window from the server", async () => {
     const { cookieA } = await seedTwoTenants();
     const url = `${ORIGIN}/api/v1/clubs/${CLUB_A}/teams/${TEAM_A}/state`;

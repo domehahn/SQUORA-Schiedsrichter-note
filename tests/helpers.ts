@@ -35,11 +35,34 @@ async function installApiMock(page: Page): Promise<void> {
     const stateMatch = path.match(/\/api\/v1\/clubs\/([^/]+)\/teams\/([^/]+)\/state$/);
     if (stateMatch) {
       const scope = `${stateMatch[1]}:${stateMatch[2]}`;
-      if (request.method() === "GET") return respond(states.get(scope) ?? { version: 0, archive: [], deletedIds: [], tournaments: [], teams: [], current: null });
+      const empty = { version: 0, archive: [], deletedIds: [], tournaments: [], teams: [], current: null };
+      if (request.method() === "GET") return respond(states.get(scope) ?? empty);
       const input = request.postDataJSON() as Record<string, unknown>;
-      const currentVersion = Number(states.get(scope)?.version ?? 0);
+      const stored = { ...empty, ...states.get(scope) } as Record<string, unknown> & { archive: { state: { id: string } }[]; tournaments: { id: string }[] };
+      const currentVersion = Number(stored.version ?? 0);
       if (Number(input.version) !== currentVersion) return respond({ error: { code: "VERSION_CONFLICT" } }, 409);
-      states.set(scope, { ...input, version: currentVersion + 1 });
+      let next: Record<string, unknown>;
+      if (input.delta === true) {
+        // apply the delta the same way the real Worker does
+        const m = (input.matches ?? {}) as { upsert?: { state: { id: string } }[]; removeIds?: string[] };
+        const t = (input.tournaments ?? {}) as { upsert?: { id: string }[]; removeIds?: string[] };
+        const byMatch = new Map(stored.archive.map((e) => [e.state.id, e]));
+        for (const entry of m.upsert ?? []) byMatch.set(entry.state.id, entry);
+        for (const id of m.removeIds ?? []) byMatch.delete(id);
+        const byTour = new Map(stored.tournaments.map((e) => [e.id, e]));
+        for (const entry of t.upsert ?? []) byTour.set(entry.id, entry);
+        for (const id of t.removeIds ?? []) byTour.delete(id);
+        next = {
+          ...stored,
+          archive: [...byMatch.values()],
+          tournaments: [...byTour.values()],
+          teams: "teams" in input ? input.teams : stored.teams,
+          current: "current" in input ? input.current : stored.current,
+        };
+      } else {
+        next = { ...input };
+      }
+      states.set(scope, { ...next, version: currentVersion + 1 });
       return respond({ ok: true, version: currentVersion + 1 });
     }
     return respond({ error: { code: "NOT_FOUND" } }, 404);
