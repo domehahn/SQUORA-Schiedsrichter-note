@@ -4,6 +4,7 @@ import { exportClub } from "./api/export";
 import { login, logout, me } from "./api/auth";
 import { createMatch, deleteMatch, getMatch, listMatches, updateMatch } from "./api/matches";
 import { inviteMember, listMembers, removeMember, updateMember } from "./api/members";
+import { listLegacyTenants, migrateLegacy, readLegacyPayload } from "./api/legacy-migration";
 import { getState, putState } from "./api/state";
 import { createTeam, listTeams } from "./api/teams";
 import { confirmDfbnetImport, createDfbnetImport, listDfbnetImports } from "./api/dfbnet";
@@ -60,6 +61,12 @@ async function routeAuthenticated(request: Request, env: Env, auth: AuthContext,
   if (path === "/api/v1/me" && request.method === "DELETE") return deleteAccount(request, env, auth, requestId);
   if (path === "/api/v1/auth/logout" && request.method === "POST") return logout(request, env, requestId);
   if (path === "/api/v1/auth/logout-all" && request.method === "POST") return logout(request, env, requestId, true);
+  if (path === "/api/v1/legacy/tenants" && request.method === "GET") return listLegacyTenants(env, auth, requestId);
+  const legacyPayload = path.match(/^\/api\/v1\/legacy\/tenants\/([^/]+)\/payload$/u);
+  if (legacyPayload) {
+    if (request.method === "GET") return readLegacyPayload(env, auth, decodeURIComponent(legacyPayload[1]), requestId);
+    return methodNotAllowed();
+  }
   if (path === "/auth/logout" && request.method === "POST") {
     const response = await logout(request, env, requestId);
     return redirect(`${MOUNT_PATH}/`, requestId, response.headers.get("Set-Cookie") ?? undefined);
@@ -109,6 +116,11 @@ async function routeAuthenticated(request: Request, env: Env, auth: AuthContext,
     const teamId = decodeURIComponent(teamState[2]);
     if (request.method === "GET") return getState(env, auth, clubId, teamId, requestId);
     if (request.method === "PUT") return putState(request, env, auth, clubId, teamId, requestId);
+    return methodNotAllowed();
+  }
+  const legacyMigration = path.match(/^\/api\/v1\/clubs\/([^/]+)\/teams\/([^/]+)\/migrations\/legacy$/u);
+  if (legacyMigration) {
+    if (request.method === "POST") return migrateLegacy(request, env, auth, decodeURIComponent(legacyMigration[1]), decodeURIComponent(legacyMigration[2]), requestId);
     return methodNotAllowed();
   }
   const imports = path.match(/^\/api\/v1\/clubs\/([^/]+)\/teams\/([^/]+)\/dfbnet\/imports$/u);

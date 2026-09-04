@@ -17,7 +17,7 @@ export async function migrate(): Promise<void> {
 }
 
 export async function resetDb(): Promise<void> {
-  for (const table of ["audit_log", "sessions", "dfbnet_imports", "team_drafts", "team_rosters", "team_sync_versions", "match_events", "matches", "players", "tournaments", "teams", "memberships", "clubs", "users"]) {
+  for (const table of ["audit_log", "sessions", "legacy_migrations", "dfbnet_imports", "team_drafts", "team_rosters", "team_sync_versions", "match_events", "matches", "players", "tournaments", "teams", "memberships", "clubs", "users"]) {
     await env.DB.prepare(`DELETE FROM ${table}`).run();
   }
 }
@@ -71,4 +71,3 @@ export function jsonHeaders(cookie: string): Record<string, string> {
 export function matchBody(version?: number): Record<string, unknown> {
   return { ...(version ? { version } : {}), matchDate: "2026-09-03", competition: "Synthetic test league", venue: "Test venue", state: "setup", payload: { homeTeam: "A", awayTeam: "B" }, events: [] };
 }
-
