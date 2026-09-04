@@ -85,4 +85,43 @@ describe("DFBnet staged import", () => {
     expect((await SELF.fetch(url(CLUB_A, TEAM_A), { method: "POST", headers: jsonHeaders(cookieA), body: JSON.stringify(roster()) })).status).toBe(403);
     expect((await SELF.fetch(url(CLUB_A, TEAM_A), { headers: { Cookie: cookieA } })).status).toBe(200);
   });
+
+  it("merge keeps dropped players; replace reconciles the roster to exactly the import", async () => {
+    const { cookieA } = await seedTwoTenants();
+    const names = () => env.DB.prepare("SELECT name FROM players WHERE club_id=? AND team_id=? ORDER BY name").bind(CLUB_A, TEAM_A).all<{ name: string }>();
+
+    // seed A, B, C
+    const seed = { filename: "r.csv", confirm: true, players: [
+      { name: "Player A", externalId: "X-1" },
+      { name: "Player B", externalId: "X-2" },
+      { name: "Player C", externalId: "X-3" },
+    ] };
+    await SELF.fetch(url(CLUB_A, TEAM_A), { method: "POST", headers: jsonHeaders(cookieA), body: JSON.stringify(seed) });
+    expect((await names()).results.map((r) => r.name)).toEqual(["Player A", "Player B", "Player C"]);
+
+    // merge without C -> C stays
+    const withoutC = { filename: "r2.csv", confirm: true, mode: "merge", players: [
+      { name: "Player A", externalId: "X-1" }, { name: "Player B", externalId: "X-2" },
+    ] };
+    await SELF.fetch(url(CLUB_A, TEAM_A), { method: "POST", headers: jsonHeaders(cookieA), body: JSON.stringify(withoutC) });
+    expect((await names()).results.map((r) => r.name)).toEqual(["Player A", "Player B", "Player C"]);
+
+    // replace without C -> C removed
+    const replace = { ...withoutC, filename: "r3.csv", mode: "replace" };
+    const done = await SELF.fetch(url(CLUB_A, TEAM_A), { method: "POST", headers: jsonHeaders(cookieA), body: JSON.stringify(replace) });
+    expect(done.status).toBe(201);
+    expect((await names()).results.map((r) => r.name)).toEqual(["Player A", "Player B"]);
+
+    const audit = await env.DB.prepare("SELECT metadata_json AS m FROM audit_log WHERE action='DFBNET_IMPORT_COMPLETED' ORDER BY created_at DESC").first<{ m: string }>();
+    expect(JSON.parse(audit!.m).mode).toBe("replace");
+  });
+
+  it("replace also removes a manually added player without an externalId", async () => {
+    const { cookieA } = await seedTwoTenants();
+    await env.DB.prepare("INSERT INTO players (club_id,id,team_id,external_id,name,shirt_number,version,created_at,updated_at) VALUES (?,?,?,NULL,?,?,1,?,?)")
+      .bind(CLUB_A, crypto.randomUUID(), TEAM_A, "Manuell Zusatz", "99", new Date().toISOString(), new Date().toISOString()).run();
+    await SELF.fetch(url(CLUB_A, TEAM_A), { method: "POST", headers: jsonHeaders(cookieA), body: JSON.stringify({ filename: "r.csv", confirm: true, mode: "replace", players: [{ name: "Player A", externalId: "X-1" }] }) });
+    const rows = await env.DB.prepare("SELECT name FROM players WHERE club_id=? AND team_id=?").bind(CLUB_A, TEAM_A).all<{ name: string }>();
+    expect(rows.results.map((r) => r.name)).toEqual(["Player A"]);
+  });
 });

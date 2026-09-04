@@ -17,10 +17,13 @@ interface RosterPlayer {
   externalId: string | null;
 }
 
+type RosterMode = "merge" | "replace";
+
 interface RosterInput {
   filename: string;
   players: RosterPlayer[];
   confirm: boolean;
+  mode: RosterMode;
 }
 
 function parseRoster(value: unknown): RosterInput {
@@ -39,17 +42,34 @@ function parseRoster(value: unknown): RosterInput {
       externalId: stringValue(player, "externalId", { max: 120, optional: true }) ?? null,
     };
   });
-  return { filename, players, confirm: source.confirm === true };
+  const mode = stringValue(source, "mode", { max: 10, optional: true }) ?? "merge";
+  if (mode !== "merge" && mode !== "replace") throw new HttpError(422, "VALIDATION_FAILED", "Unknown import mode.");
+  return { filename, players, confirm: source.confirm === true, mode };
 }
 
-/** Stable content hash over the normalized roster, scoped to the target team, independent of client input. */
-async function fingerprint(teamId: string, players: RosterPlayer[]): Promise<string> {
+/** Stable content hash over the normalized roster, scoped to team + mode, independent of client input. */
+async function fingerprint(teamId: string, mode: RosterMode, players: RosterPlayer[]): Promise<string> {
   const rows = players
     .map((p) => [p.externalId ?? "", p.name, p.firstName ?? "", p.shirtNumber ?? ""])
     .sort((a, b) => (a.join(" ") < b.join(" ") ? -1 : 1));
-  const canonical = JSON.stringify([teamId, ...rows]);
+  const canonical = JSON.stringify([teamId, mode, ...rows]);
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(canonical)));
   return [...digest].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * `replace` mode reconciles the team roster to exactly the imported list: after
+ * the upserts, drop every player that is neither matched by externalId nor by
+ * name in the incoming set. `merge` mode never deletes.
+ */
+function reconcileStatement(db: D1Database, clubId: string, teamId: string, players: RosterPlayer[]): D1PreparedStatement {
+  const externalIds = JSON.stringify(players.map((p) => p.externalId).filter((id): id is string => Boolean(id)));
+  const names = JSON.stringify(players.map((p) => p.name.toLowerCase()));
+  return db.prepare(
+    "DELETE FROM players WHERE club_id=? AND team_id=? " +
+    "AND (external_id IS NULL OR external_id NOT IN (SELECT value FROM json_each(?))) " +
+    "AND lower(name) NOT IN (SELECT value FROM json_each(?))",
+  ).bind(clubId, teamId, externalIds, names);
 }
 
 function upsertStatements(db: D1Database, clubId: string, teamId: string, players: RosterPlayer[], now: string): D1PreparedStatement[] {
@@ -77,17 +97,19 @@ function upsertStatements(db: D1Database, clubId: string, teamId: string, player
   return statements;
 }
 
-async function applyImport(env: Env, auth: AuthContext, clubId: string, teamId: string, importId: string, players: RosterPlayer[]): Promise<void> {
+async function applyImport(env: Env, auth: AuthContext, clubId: string, teamId: string, importId: string, players: RosterPlayer[], mode: RosterMode): Promise<void> {
   const now = new Date().toISOString();
+  const statements = upsertStatements(env.DB, clubId, teamId, players, now);
+  if (mode === "replace") statements.push(reconcileStatement(env.DB, clubId, teamId, players));
   try {
-    await env.DB.batch(upsertStatements(env.DB, clubId, teamId, players, now));
+    await env.DB.batch(statements);
     await env.DB.prepare("UPDATE dfbnet_imports SET status='completed',completed_at=?,record_count=? WHERE club_id=? AND id=?")
       .bind(now, players.length, clubId, importId).run();
-    await writeAudit(env.DB, { clubId, userId: auth.userId, action: "DFBNET_IMPORT_COMPLETED", entityType: "dfbnet_import", entityId: importId, metadata: { records: players.length, teamId } });
+    await writeAudit(env.DB, { clubId, userId: auth.userId, action: "DFBNET_IMPORT_COMPLETED", entityType: "dfbnet_import", entityId: importId, metadata: { records: players.length, teamId, mode } });
   } catch (error) {
     await env.DB.prepare("UPDATE dfbnet_imports SET status='failed',completed_at=?,error_summary=? WHERE club_id=? AND id=?")
       .bind(now, "roster persistence failed", clubId, importId).run();
-    await writeAudit(env.DB, { clubId, userId: auth.userId, action: "DFBNET_IMPORT_FAILED", entityType: "dfbnet_import", entityId: importId, metadata: { teamId } });
+    await writeAudit(env.DB, { clubId, userId: auth.userId, action: "DFBNET_IMPORT_FAILED", entityType: "dfbnet_import", entityId: importId, metadata: { teamId, mode } });
     throw error;
   }
 }
@@ -103,7 +125,7 @@ export async function createDfbnetImport(request: Request, env: Env, auth: AuthC
   const context = await requireTeamAccess(env.DB, auth, clubId, teamId, "dfbnet.import");
   await enforceRateLimit(env.IMPORT_RATE_LIMITER, [clientIp(request), auth.userId, context.clubId, "dfbnet.import"]);
   const input = parseRoster(await readJson(request, 4_194_304));
-  const print = await fingerprint(context.teamId, input.players);
+  const print = await fingerprint(context.teamId, input.mode, input.players);
 
   const existing = await env.DB.prepare("SELECT id,status,record_count AS recordCount FROM dfbnet_imports WHERE club_id=? AND fingerprint=?")
     .bind(context.clubId, print).first<{ id: string; status: string; recordCount: number }>();
@@ -120,7 +142,7 @@ export async function createDfbnetImport(request: Request, env: Env, auth: AuthC
   }
 
   if (input.confirm) {
-    await applyImport(env, auth, context.clubId, context.teamId, importId, input.players);
+    await applyImport(env, auth, context.clubId, context.teamId, importId, input.players, input.mode);
     return json({ importId, status: "completed", recordCount: input.players.length }, requestId, existing ? 200 : 201);
   }
   return json({ importId, status: "previewed", recordCount: input.players.length, fingerprint: print }, requestId, existing ? 200 : 201);
@@ -139,10 +161,10 @@ export async function confirmDfbnetImport(request: Request, env: Env, auth: Auth
   if (row.status === "failed") throw new HttpError(409, "IMPORT_FAILED", "This import can no longer be confirmed.");
 
   const input = parseRoster(await readJson(request, 4_194_304));
-  if (await fingerprint(context.teamId, input.players) !== row.fingerprint) {
+  if (await fingerprint(context.teamId, input.mode, input.players) !== row.fingerprint) {
     throw new HttpError(422, "PAYLOAD_MISMATCH", "The roster does not match the previewed import.");
   }
-  await applyImport(env, auth, context.clubId, context.teamId, importId, input.players);
+  await applyImport(env, auth, context.clubId, context.teamId, importId, input.players, input.mode);
   return json({ importId, status: "completed", recordCount: input.players.length }, requestId);
 }
 
