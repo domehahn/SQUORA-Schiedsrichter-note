@@ -1,6 +1,6 @@
 # Current architecture
 
-Status: 2026-09-04, commit `521e083`. Per-epic detail: `docs/EPIC_STATUS.md`;
+Status: 2026-09-04, commit `0a01bf9`. Per-epic detail: `docs/EPIC_STATUS.md`;
 release gate: `docs/PRODUCTION_READINESS.md`.
 
 ## Runtime
@@ -51,13 +51,16 @@ A `scheduled` handler runs daily (`triggers.crons`): retention cleanup
   its own `team_sync_versions` (aggregate optimistic-lock counter),
   `team_drafts` (live match + clock) and `team_rosters` (minimized roster
   library).
-- `GET/PUT /api/v1/clubs/:club/teams/:team/state` is the whole-team snapshot
-  (archive, tournaments, roster library, live match). PUT is optimistically
-  locked: the version bump **and** the data write run in one `DB.batch()`
-  transaction with an abort-guard, so it is atomic under truly parallel writers;
-  a mismatch is 409 `VERSION_CONFLICT`. The write is **incremental** — unchanged
-  matches (and their events) and tournaments are skipped; only changed/new rows
-  are upserted and only removed rows are deleted.
+- `GET/PUT /api/v1/clubs/:club/teams/:team/state`. GET returns the whole-team
+  snapshot. PUT takes either a **delta** (`{ delta: true, matches: { upsert,
+  removeIds }, tournaments: {…}, teams?, current? }` — only the listed rows are
+  touched, the normal client sync after first load) or a **full snapshot**
+  (server diffs it and additionally sweeps rows the client dropped — bootstrap /
+  legacy migration / reconciliation). Both are optimistically locked: the
+  version bump **and** every data statement run in one `DB.batch()` transaction
+  with an abort-guard, atomic under truly parallel writers; mismatch → 409
+  `VERSION_CONFLICT`. The client (`sync.ts`) keeps the last confirmed snapshot
+  per scope and computes the delta from it.
 - Individual match CRUD (`/matches`, `/matches/:id`) requires a `teamId` of the
   club, is cursor-paginated, soft-deletes (`deleted_at`), per-row `version` in
   one atomic batch, and writes `audit_log`.
@@ -113,8 +116,8 @@ structured line.
 
 ## Quality baseline
 
-- Unit: 33 · Worker (Miniflare + D1 `0001–0016`): 64 · e2e (Playwright): 19
-  (+1 skipped) · real-Worker e2e: 3 · build + lint + `npm audit --audit-level=high`:
+- Unit: 33 · Worker (Miniflare + D1 `0001–0016`): 66 · e2e (Playwright): 19
+  (+1 skipped) · real-Worker e2e: 4 · build + lint + `npm audit --audit-level=high`:
   clean.
 - CI: `.github/workflows/ci.yml` (quality, e2e, e2e-worker, security, CodeQL).
   `main` branch protection requires all 5 checks.
@@ -123,7 +126,7 @@ structured line.
 
 Tracked in `docs/EPIC_STATUS.md` / `docs/PRODUCTION_READINESS.md`: the DFBnet
 **UI** still keeps opponent rosters in the match blob rather than
-`teams`/`players` (needs the relational roster model); no incremental relational
-match/event API yet (the `/state` snapshot is the sync surface); the weekly
-logical `d1 export` is policy-only; `ALERT_WEBHOOK_URL` must be set in production
-for alerts to deliver; no `repositories/` layer.
+`teams`/`players` (needs the relational roster model — the `/state` delta stays
+the sync surface); no per-resource REST for matches/events beyond the flat
+club-wide CRUD; the weekly logical `d1 export` is policy-only; `ALERT_WEBHOOK_URL`
+must be set in production for alerts to deliver; no `repositories/` layer.

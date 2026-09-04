@@ -1,13 +1,13 @@
 # CODEX EPIC — implementation status
 
 Audit of the 47-epic production-readiness brief against `main` at commit
-`1d804d2`. Legend: **done** shipped and tested · **partial** core in place,
+`0a01bf9`. Legend: **done** shipped and tested · **partial** core in place,
 gaps noted · **open** not started.
 
 | Epic | Status | Evidence / gap |
 | --- | --- | --- |
 | 0 — Security cleanup & baseline | done | Synthetic fixtures ("Max Testspieler", `0100-0000`, `@example.invalid`); `docs/security/{THREAT_MODEL,TENANT_ISOLATION,DATA_CLASSIFICATION,SECURITY_ASSUMPTIONS}.md`; CI secret guard. |
-| 1 — Cloudflare D1 | done | `migrations/0001…0015`; `wrangler.jsonc` D1 binding per env; `applyD1Migrations` in worker tests; all migrations applied remotely in dev/staging/production. |
+| 1 — Cloudflare D1 | done | `migrations/0001…0016`; `wrangler.jsonc` D1 binding per env; `applyD1Migrations` in worker tests; all migrations applied remotely in dev/staging/production. |
 | 2 — Data model | done | `users, clubs, memberships, teams, players, matches, match_events, tournaments, dfbnet_imports, sessions, audit_log` + `team_*` sync tables. UUID ids, `version` columns. |
 | 3 — Server tenant resolution | done | `middleware/tenant.ts` `requireTenantAccess` / `requireTeamAccess`; no club query runs before a `TenantContext`. |
 | 4 — RBAC | done | `auth/roles.ts`, `auth/permissions.ts` (5 roles, 17 permissions); every API passes an explicit permission. |
@@ -19,7 +19,7 @@ gaps noted · **open** not started.
 | 10 — DFBnet integration layer | done | Client `src/integrations/dfbnet/*` (RFC-4180 parser, limits, schema detection, dedup) plus server-side staged endpoint `POST/GET /api/v1/clubs/:c/teams/:t/dfbnet/imports` and `…/:id/confirm` in `cloudflare/api/dfbnet.ts` — re-validate, re-minimize, server-computed fingerprint, `dfbnet_imports` audit record, idempotent player upsert. |
 | 11 — DFBnet data minimization | done | `ALLOWED` whitelist in `schema.ts`; server `FORBIDDEN_DFBNET_FIELDS` strips birthdate/pass/nationality/eligibility in `api/state.ts`. |
 | 12 — DFBnet adapter architecture | done | `RosterProvider` interface + `DfbnetCsvProvider`; domain model has no DFBnet field names. |
-| 13 — API architecture | partial | `cloudflare/{api,auth,middleware,core,services,legacy}` split with dedicated members, DFBnet and migration modules. No separate `repositories/` layer; the client `App.tsx` remains large. |
+| 13 — API architecture | partial | `cloudflare/{api,auth,middleware,core,services,legacy}` split with dedicated members, DFBnet and migration modules. The `/state` sync now uploads a **delta** (`{ delta: true, matches: {upsert, removeIds}, … }`), not the whole archive each tick; the full snapshot stays for bootstrap/migration/reconcile. No separate `repositories/` layer; per-resource REST beyond the flat match CRUD is future work. |
 | 14 — API versioning | done | All routes under `/api/v1/`. |
 | 15 — BOLA / IDOR | done | `cloudflare/test/{tenant,matches,teams}.test.ts` — foreign club/match/team → 404; foreign update/delete → 404. |
 | 16 — Database integrity | done | Composite PKs `(club_id, id)`, composite FKs `(club_id, team_id) → teams`, `CHECK`, `UNIQUE (club_id, external_id)`. |
