@@ -9,12 +9,14 @@ test("erlaubt eigene Halbzeitlängen für F- und G-Jugend", async ({ page }) => 
   await ageGroup.selectOption("F");
   await expect(duration).toBeEnabled();
   await duration.fill("17");
-  await expect(page.getByText("2 × 17 Minuten", { exact: true })).toBeVisible();
+  // F- und G-Jugend spielen laut FVR-Bestimmungen eine durchgehende Spielzeit
+  // statt zweier Halbzeiten mit Seitenwechsel.
+  await expect(page.getByText("17 Minuten, eine Halbzeit", { exact: true })).toBeVisible();
 
   await ageGroup.selectOption("G");
   await expect(duration).toBeEnabled();
   await duration.fill("12");
-  await expect(page.getByText("2 × 12 Minuten", { exact: true })).toBeVisible();
+  await expect(page.getByText("12 Minuten, eine Halbzeit", { exact: true })).toBeVisible();
 
   await ageGroup.selectOption("D");
   await expect(duration).toBeDisabled();
@@ -56,6 +58,30 @@ test("führt ein Jugendspiel mit Tor, Wechsel, Karten und Spielende", async ({ p
   await expect(page.getByText("Beendet", { exact: true })).toBeVisible();
   await expect(page.locator(".event-table").getByText("Spielende", { exact: true })).toBeVisible();
   await expect(page.locator(".event-table")).toContainText("Tor SV Blau · Nr. 2");
+});
+
+test("spielt ein Funino-Spiel (F-Jugend) als eine durchgehende Spielzeit ohne Halbzeit", async ({ page }) => {
+  await page.clock.install();
+  await openApp(page);
+  await page.locator("select").selectOption("F");
+  await page.locator('input[type="number"]').fill("1");
+  await page.getByRole("button", { name: "Spiel starten" }).click();
+
+  // Es gibt keinen Halbzeitpfiff, nur ein direktes Spielende.
+  await expect(page.getByRole("button", { name: "Halbzeit", exact: true })).not.toBeVisible();
+  await expect(page.locator(".phase-pill")).toHaveText("Spielzeit");
+
+  await page.locator(".team-actions.home").getByRole("button", { name: "Tor Heim", exact: true }).click();
+  await page.locator(".modal input").first().fill("3");
+  await page.getByRole("button", { name: "Ereignis speichern" }).click();
+  await expect(page.locator(".score")).toContainText("1");
+
+  await page.clock.fastForward(65_000);
+  await page.getByRole("button", { name: "Spielende", exact: true }).click();
+  await expect(page.getByText("Beendet", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "2. Halbzeit starten" })).not.toBeVisible();
+  await expect(page.locator(".event-table").getByText("Spielende", { exact: true })).toBeVisible();
+  await expect(page.locator(".event-table").getByText("Anpfiff", { exact: true })).toBeVisible();
 });
 
 test("bleibt auf schmalen Smartphones vollständig bedienbar", async ({ page }, testInfo) => {

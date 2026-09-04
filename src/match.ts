@@ -139,6 +139,15 @@ export const ageGroups = [
   { value: "custom", label: "Eigene Spielzeit", minutes: 30 },
 ] as const;
 
+/**
+ * F- und G-Jugend (Funino/Bambini) spielen laut FVR-Durchführungsbestimmungen
+ * im Turnierspielbetrieb ohne Schiedsrichter mit einer durchgehenden
+ * Spielzeit statt zweier Halbzeiten mit Seitenwechsel.
+ */
+export function isSingleHalfAgeGroup(ageGroup: string): boolean {
+  return ageGroup === "F" || ageGroup === "G";
+}
+
 export const emptyMeta: MatchMeta = {
   referee: "",
   assistant1: "",

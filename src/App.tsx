@@ -13,6 +13,7 @@ import { CollapsibleSection, MetaPanel, SessionExpiredModal, StatsPanel, TeamAct
 import { TeamRosterPanel } from "./TeamRosterPanel";
 import { downloadBlob, downloadJson } from "./download";
 import { ACTIVE_TENANT_KEY, SOUND_KEY } from "./localData";
+import { applyTheme, loadTheme, nextTheme, saveTheme, THEME_LABEL, type ThemeMode } from "./theme";
 import { readEncryptedCache, writeEncryptedCache } from "./encryptedCache";
 import { scopeKey, type TeamUnit, type TenantMeta } from "./tenant";
 import {
@@ -38,6 +39,7 @@ import {
   formatWallClock,
   hadExtraTime,
   hasPriorYellow,
+  isSingleHalfAgeGroup,
   matchDateLabel,
   matchTimeMs,
   normalizeMatch,
@@ -132,6 +134,7 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [teams, setTeams] = useState<SavedTeam[]>([]);
   const [soundOn, setSoundOn] = useState<boolean>(loadSound);
+  const [theme, setTheme] = useState<ThemeMode>(loadTheme);
   const [sessionExpired, setSessionExpired] = useState(false);
   const [syncState, setSyncState] = useState<SyncState>("idle");
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
@@ -153,6 +156,7 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
   useWakeLock(match.runningSince !== null);
 
   useEffect(() => { try { localStorage.setItem(SOUND_KEY, soundOn ? "1" : "0"); } catch { /* ignore */ } }, [soundOn]);
+  useEffect(() => { applyTheme(theme); saveTheme(theme); }, [theme]);
 
   useEffect(() => {
     const check = async () => {
@@ -270,6 +274,7 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
 
   const runningField = RUNNING_FIELD_BY_PHASE[match.phase];
   const activeHalf = Boolean(runningField);
+  const singleHalf = isSingleHalfAgeGroup(match.ageGroup);
   const inBreak = match.phase === "halfTime" || match.phase === "extraBreak";
   const inShootout = match.phase === "shootout";
   const canRecord = activeHalf || inBreak;
@@ -345,7 +350,7 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
     unlockAudio();
     const timestamp = Date.now();
     setNow(timestamp);
-    setMatch((state) => addPeriodEvent({ ...state, phase: "firstHalf", runningSince: timestamp, startedAt: new Date(timestamp).toISOString(), updatedAt: nowIso() }, "Anpfiff · 1. Halbzeit", timestamp));
+    setMatch((state) => addPeriodEvent({ ...state, phase: "firstHalf", runningSince: timestamp, startedAt: new Date(timestamp).toISOString(), updatedAt: nowIso() }, isSingleHalfAgeGroup(state.ageGroup) ? "Anpfiff" : "Anpfiff · 1. Halbzeit", timestamp));
     buzz("half");
   };
 
@@ -800,10 +805,10 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
   };
 
   const phaseLabel = useMemo(() => ({
-    setup: "Spielvorbereitung", firstHalf: "1. Halbzeit", halfTime: "Halbzeit",
+    setup: "Spielvorbereitung", firstHalf: singleHalf ? "Spielzeit" : "1. Halbzeit", halfTime: "Halbzeit",
     secondHalf: "2. Halbzeit", extraFirst: "1. HZ Verlängerung", extraBreak: "Pause Verlängerung",
     extraSecond: "2. HZ Verlängerung", shootout: "Elfmeterschießen", finished: "Beendet", abandoned: "Abgebrochen",
-  })[match.phase], [match.phase]);
+  })[match.phase], [match.phase, singleHalf]);
 
   const syncAgo = lastSyncedAt ? Math.max(0, Math.round((now - lastSyncedAt) / 1000)) : null;
   const syncAgoText = syncAgo === null ? "noch nicht abgeglichen"
@@ -826,6 +831,9 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
           </button>
           <button className="sound-toggle" aria-pressed={soundOn} title={soundOn ? "Signaltöne aus" : "Signaltöne an"} onClick={() => { unlockAudio(); setSoundOn((value) => !value); }}>
             <Icon name={soundOn ? "sound" : "mute"} />
+          </button>
+          <button className="sound-toggle" title={`Anzeige: ${THEME_LABEL[theme]} · tippen zum Wechseln`} onClick={() => setTheme((value) => nextTheme(value))}>
+            <Icon name={theme === "light" ? "sun" : theme === "dark" ? "moon" : "monitor"} />
           </button>
           <button className={`save-status sync-${syncState}`} onClick={syncNow} title="Jetzt synchronisieren">
             <span className="save-dot" /> <span className="save-text">{syncStatusLabel[syncState]}</span>
@@ -852,8 +860,8 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
               const selected = ageGroups.find((group) => group.value === event.target.value)!;
               patchMatch({ ageGroup: selected.value, halfDurationMinutes: selected.minutes });
             }}>{ageGroups.map((group) => <option key={group.value} value={group.value}>{group.label}</option>)}</select></label>
-            <label><span>Minuten je Halbzeit</span><div className="input-suffix"><input type="number" min="1" max="60" value={match.halfDurationMinutes} placeholder=" " disabled={match.phase !== "setup" || !EDITABLE_DURATION_GROUPS.has(match.ageGroup)} onChange={(event) => patchMatch({ halfDurationMinutes: Number(event.target.value) || 1 })} /><em>min</em></div></label>
-            <div className="rule-hint"><Icon name="clock" /><span><strong>2 × {match.halfDurationMinutes} Minuten</strong><small>Nachspielzeit läuft automatisch weiter.</small></span></div>
+            <label><span>{singleHalf ? "Minuten Spielzeit" : "Minuten je Halbzeit"}</span><div className="input-suffix"><input type="number" min="1" max="60" value={match.halfDurationMinutes} placeholder=" " disabled={match.phase !== "setup" || !EDITABLE_DURATION_GROUPS.has(match.ageGroup)} onChange={(event) => patchMatch({ halfDurationMinutes: Number(event.target.value) || 1 })} /><em>min</em></div></label>
+            <div className="rule-hint"><Icon name="clock" /><span><strong>{singleHalf ? `${match.halfDurationMinutes} Minuten, eine Halbzeit` : `2 × ${match.halfDurationMinutes} Minuten`}</strong><small>{singleHalf ? "Kein Seitenwechsel, durchgehende Spielzeit." : "Nachspielzeit läuft automatisch weiter."}</small></span></div>
           </div>
 
           <div className="setup-extra">
@@ -902,12 +910,12 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
             <div className="team team-away"><label htmlFor="away-team">Gast</label><input id="away-team" aria-label="Name der Gastmannschaft" value={match.awayTeam} maxLength={40} onChange={(event) => patchMatch({ awayTeam: event.target.value })} /></div>
           </div>
           <div className="clock-block">
-            <div className="clock-time">{formatClock(activeHalf ? periodMs : inShootout ? 0 : match.phase === "finished" || match.phase === "abandoned" ? (hadExtraTime(match) ? match.extraSecondMs : match.secondHalfMs) : inBreak ? currentPeriodMs(match, now) : match.firstHalfMs)}</div>
+            <div className="clock-time">{formatClock(activeHalf ? periodMs : inShootout ? 0 : match.phase === "finished" || match.phase === "abandoned" ? (hadExtraTime(match) ? match.extraSecondMs : (singleHalf || match.secondHalfMs === 0 ? match.firstHalfMs : match.secondHalfMs)) : inBreak ? currentPeriodMs(match, now) : match.firstHalfMs)}</div>
             {activeHalf && stoppageMs > 0 && <div className={`stoppage ${reachedStoppageTarget ? "target" : ""}`}>+ {formatClock(stoppageMs)} Nachspielzeit{match.announcedStoppageMin > 0 ? ` · Ansage +${match.announcedStoppageMin}` : ""}</div>}
             {activeHalf && match.announcedStoppageMin > 0 && stoppageMs === 0 && <div className="stoppage">Ansage: +{match.announcedStoppageMin} min · Abpfiff ab {formatClock(stoppageTargetMs)}</div>}
             {inShootout && <div className="clock-time shootout-score">{shoot.home} : {shoot.away}</div>}
             <div className="clock-subtitle">{
-              match.phase === "firstHalf" ? `von ${match.halfDurationMinutes}:00 · 1. Halbzeit`
+              match.phase === "firstHalf" ? (singleHalf ? `von ${match.halfDurationMinutes}:00` : `von ${match.halfDurationMinutes}:00 · 1. Halbzeit`)
               : match.phase === "secondHalf" ? `von ${match.halfDurationMinutes}:00 · 2. Halbzeit`
               : match.phase === "extraFirst" ? `von ${match.extraDurationMinutes}:00 · 1. HZ Verlängerung`
               : match.phase === "extraSecond" ? `von ${match.extraDurationMinutes}:00 · 2. HZ Verlängerung`
@@ -915,6 +923,7 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
               : inShootout ? `${shoot.homeTaken + shoot.awayTaken} Schüsse · ${shoot.nextTeam === "home" ? match.homeTeam : match.awayTeam} ist dran`
               : match.phase === "finished" ? `Endstand${match.shootout.length ? ` · n.E. ${shoot.home}:${shoot.away}` : ""} · ${match.events.filter((event) => event.kind !== "period").length} Ereignisse`
               : match.phase === "abandoned" ? "Spiel abgebrochen"
+              : singleHalf ? `Bereit für ${match.halfDurationMinutes} Minuten`
               : `Bereit für 2 × ${match.halfDurationMinutes} Minuten`
             }</div>
           </div>
@@ -967,7 +976,8 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
             {activeHalf && <button className="secondary-control" onClick={toggleClock}><Icon name={match.runningSince === null ? "play" : "pause"} /> {match.runningSince === null ? "Uhr fortsetzen" : "Uhr anhalten"}</button>}
             {activeHalf && <button className="secondary-control" onClick={correctClock}><Icon name="edit" /> Uhr korrigieren</button>}
             {activeHalf && <button className="secondary-control" onClick={announceStoppage}><Icon name="stopwatch" /> Nachspielzeit</button>}
-            {match.phase === "firstHalf" && <button className="primary-control" disabled={!periodUnlocked} onClick={finishFirstHalf}><Icon name="whistle" /> Halbzeit</button>}
+            {match.phase === "firstHalf" && singleHalf && <button className="finish-control" disabled={!periodUnlocked} onClick={finishMatch}><Icon name="whistle" /> Spielende</button>}
+            {match.phase === "firstHalf" && !singleHalf && <button className="primary-control" disabled={!periodUnlocked} onClick={finishFirstHalf}><Icon name="whistle" /> Halbzeit</button>}
             {match.phase === "halfTime" && <button className="primary-control" onClick={startSecondHalf}><Icon name="play" /> 2. Halbzeit starten</button>}
             {match.phase === "secondHalf" && match.knockout && level && <button className="primary-control" disabled={!periodUnlocked} onClick={startExtraTime}><Icon name="play" /> Verlängerung</button>}
             {match.phase === "secondHalf" && <button className="finish-control" disabled={!periodUnlocked} onClick={finishMatch}><Icon name="whistle" /> {match.knockout && level ? "Ohne Verl. beenden" : "Spielende"}</button>}
@@ -976,7 +986,7 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
             {match.phase === "extraSecond" && <button className="finish-control" disabled={!periodUnlocked} onClick={finishExtraTime}><Icon name="whistle" /> {match.knockout && level ? "Elfmeterschießen" : "Spielende"}</button>}
             {(activeHalf || inBreak) && <button className="danger-control" onClick={abandonMatch}><Icon name="alert" /> Spielabbruch</button>}
           </div>
-          {activeHalf && !periodUnlocked && <p className="unlock-note no-print">{match.phase === "firstHalf" || match.phase === "extraFirst" ? "Halbzeitpfiff" : "Abpfiff"} in {formatClock(periodTargetMs - periodMs)} verfügbar</p>}
+          {activeHalf && !periodUnlocked && <p className="unlock-note no-print">{(match.phase === "firstHalf" && !singleHalf) || match.phase === "extraFirst" ? "Halbzeitpfiff" : "Abpfiff"} in {formatClock(periodTargetMs - periodMs)} verfügbar</p>}
         </section>
 
         <section className="actions-section no-print" aria-labelledby="actions-title">

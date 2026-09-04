@@ -4,6 +4,7 @@ import {
   buildEventLabel,
   createMatch,
   hasPriorYellow,
+  isSingleHalfAgeGroup,
   matchTimeMs,
   normalizeMatch,
   sanctions,
@@ -131,6 +132,16 @@ describe("buildEventLabel", () => {
     expect(buildEventLabel("goal", "SV Blau", { player: "9", playerName: "Meier" })).toBe("Tor SV Blau · Nr. 9 (Meier)");
     expect(buildEventLabel("substitution", "SV Blau", { playerOut: "8", playerIn: "14" })).toBe("Wechsel SV Blau · Nr. 8 raus, Nr. 14 rein");
     expect(buildEventLabel("timePenalty", "FC Rot", { player: "5", durationMin: 10 })).toBe("Zeitstrafe 10 min FC Rot · Nr. 5");
+  });
+});
+
+describe("isSingleHalfAgeGroup", () => {
+  it("gilt nur für F- und G-Jugend (Funino/Bambini)", () => {
+    expect(isSingleHalfAgeGroup("F")).toBe(true);
+    expect(isSingleHalfAgeGroup("G")).toBe(true);
+    expect(isSingleHalfAgeGroup("E")).toBe(false);
+    expect(isSingleHalfAgeGroup("D")).toBe(false);
+    expect(isSingleHalfAgeGroup("custom")).toBe(false);
   });
 });
 

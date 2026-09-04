@@ -3,6 +3,7 @@ import {
   formatDate,
   formatWallClock,
   hadExtraTime,
+  isSingleHalfAgeGroup,
   matchDateLabel,
   score,
   shootoutTally,
@@ -60,8 +61,8 @@ export function MatchReport({ state, className = "" }: { state: MatchState; clas
         <MetaLine label="Datum" value={matchDateLabel(state)} />
         <MetaLine label="Anpfiff" value={state.startedAt ? `${formatWallClock(state.startedAt)} Uhr` : ""} />
         <MetaLine label="Abpfiff" value={state.finishedAt ? `${formatWallClock(state.finishedAt)} Uhr` : ""} />
-        <MetaLine label="Altersklasse" value={`${ageLabel} · 2 × ${state.halfDurationMinutes} Min.${hadExtraTime(state) ? ` + 2 × ${state.extraDurationMinutes} Min. Verl.` : ""}`} />
-        <MetaLine label="Status" value={phaseText[state.phase]} />
+        <MetaLine label="Altersklasse" value={`${ageLabel} · ${isSingleHalfAgeGroup(state.ageGroup) ? `${state.halfDurationMinutes} Min.` : `2 × ${state.halfDurationMinutes} Min.`}${hadExtraTime(state) ? ` + 2 × ${state.extraDurationMinutes} Min. Verl.` : ""}`} />
+        <MetaLine label="Status" value={state.phase === "firstHalf" && isSingleHalfAgeGroup(state.ageGroup) ? "Spielzeit" : phaseText[state.phase]} />
         <MetaLine label="Wettbewerb" value={[meta.competition, meta.matchday && `Sp. ${meta.matchday}`].filter(Boolean).join(" · ")} />
         <MetaLine label="Ort" value={meta.venue} />
         <MetaLine label="Zuschauer" value={meta.spectators} />

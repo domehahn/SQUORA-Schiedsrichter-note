@@ -25,11 +25,13 @@
   color-scheme: light dark;
 }
 
-/* Dark mode: follows the system preference. Redefines the shared surface/text
-   tokens above; individual rules that consume them (cards, inputs, borders,
-   headings) pick up the dark palette automatically. */
+/* Dark mode: follows the system preference by default (guarded so an explicit
+   data-theme="light" from the in-app toggle wins over it), and applies
+   unconditionally when the toggle sets data-theme="dark" regardless of the
+   system preference. See src/theme.ts for the toggle logic; theme-init.js
+   stamps data-theme before first paint to avoid a flash of the wrong theme. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --line: #2a3550;
     --muted: #94a2ba;
     --card: #141b2c;
@@ -40,6 +42,17 @@
     --bg-glow-2: #0f2b28;
     --shadow: 0 16px 40px rgba(0, 0, 0, .45);
   }
+}
+:root[data-theme="dark"] {
+  --line: #2a3550;
+  --muted: #94a2ba;
+  --card: #141b2c;
+  --glass: rgba(20,27,44,.88);
+  --text: #e8edf5;
+  --bg: #0a0f1c;
+  --bg-glow-1: #142244;
+  --bg-glow-2: #0f2b28;
+  --shadow: 0 16px 40px rgba(0, 0, 0, .45);
 }
 
 * { box-sizing: border-box; }
