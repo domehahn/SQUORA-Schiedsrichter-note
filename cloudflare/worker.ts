@@ -3,6 +3,7 @@ import { deleteAccount } from "./api/account";
 import { exportClub } from "./api/export";
 import { login, logout, me } from "./api/auth";
 import { createMatch, deleteMatch, getMatch, listMatches, updateMatch } from "./api/matches";
+import { inviteMember, listMembers, removeMember, updateMember } from "./api/members";
 import { getState, putState } from "./api/state";
 import { createTeam, listTeams } from "./api/teams";
 import { confirmDfbnetImport, createDfbnetImport, listDfbnetImports } from "./api/dfbnet";
@@ -78,6 +79,21 @@ async function routeAuthenticated(request: Request, env: Env, auth: AuthContext,
   const clubExport = path.match(/^\/api\/v1\/clubs\/([^/]+)\/export$/u);
   if (clubExport) {
     if (request.method === "GET") return exportClub(request, env, auth, decodeURIComponent(clubExport[1]), requestId);
+    return methodNotAllowed();
+  }
+  const members = path.match(/^\/api\/v1\/clubs\/([^/]+)\/members$/u);
+  if (members) {
+    const clubId = decodeURIComponent(members[1]);
+    if (request.method === "GET") return listMembers(request, env, auth, clubId, requestId);
+    if (request.method === "POST") return inviteMember(request, env, auth, clubId, requestId);
+    return methodNotAllowed();
+  }
+  const member = path.match(/^\/api\/v1\/clubs\/([^/]+)\/members\/([^/]+)$/u);
+  if (member) {
+    const clubId = decodeURIComponent(member[1]);
+    const userId = decodeURIComponent(member[2]);
+    if (request.method === "PATCH") return updateMember(request, env, auth, clubId, userId, requestId);
+    if (request.method === "DELETE") return removeMember(request, env, auth, clubId, userId, requestId);
     return methodNotAllowed();
   }
   const teams = path.match(/^\/api\/v1\/clubs\/([^/]+)\/teams$/u);
