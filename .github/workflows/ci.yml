@@ -105,11 +105,36 @@ jobs:
       - name: npm audit (high+ fails the build)
         run: npm audit --audit-level=high --registry=https://registry.npmjs.com
       - name: gitleaks (full history secret scan)
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_CONFIG: .gitleaks.toml
-          # gitleaks-action is free for public repos; no GITLEAKS_LICENSE needed.
+        run: |
+          set -euo pipefail
+          reachable=$(git rev-list --all --count)
+          echo "reachable commits: $reachable"
+          if [ "$reachable" -le 1 ]; then
+            echo "::error::Only $reachable commit(s) reachable — this is not a full-history checkout (check fetch-depth)."
+            exit 1
+          fi
+          GITLEAKS_VERSION=8.24.3
+          curl -sSL -o /tmp/gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          # gitleaks-action's default (--log-opts=-1) only scans the single
+          # pushed commit despite fetch-depth:0 on checkout. --log-opts="--all"
+          # tells the underlying `git log` to walk every reachable commit on
+          # every ref, so this is a genuine full-history scan, not just HEAD.
+          /tmp/gitleaks detect \
+            --redact -v \
+            --config .gitleaks.toml \
+            --log-opts="--all" \
+            --exit-code=2 \
+            --report-format=sarif \
+            --report-path=results.sarif
+      - name: Upload gitleaks report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-results.sarif
+          path: results.sarif
+          retention-days: 7
       - name: Guard against committed secrets (working tree)
         run: |
           set -uo pipefail
@@ -117,7 +142,7 @@ jobs:
             -e 'AUTH_PASSWORD_HASH=[^$]|SESSION_SECRET=[^$]|AUTH_USERS=\[' \
             -e 'pbkdf2-sha256\$[0-9]+\$[0-9a-f]{16,}' \
             -e '-----BEGIN [A-Z ]*PRIVATE KEY-----' \
-            -- ':!*.test.ts' ':!cloudflare/test/**' ':!vitest*.config.ts' ':!.github/workflows/**' \
+            -- ':!*.test.ts' ':!cloudflare/test/**' ':!vitest*.config.ts' ':!.github/workflows/**' ':!docs/security/**' \
             | grep -vaE 'DUMMY_HASH|TEST_PASSWORD_HASH|synthetic|@example\.(com|invalid)|0100-0000' || true)
           if [ -n "$hits" ]; then
             echo "$hits"

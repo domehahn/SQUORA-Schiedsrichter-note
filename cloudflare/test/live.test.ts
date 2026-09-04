@@ -9,10 +9,10 @@ const publicUrl = (token: string) => `${ORIGIN}/api/v1/live/${token}`;
 const draftWithGoal = {
   id: "aaaaaaaa-5555-4555-8555-aaaaaaaaaaaa",
   phase: "firstHalf",
-  homeTeam: "TuS Kirchberg",
+  homeTeam: "FC Beispielstadt",
   awayTeam: "SV Testverein",
   events: [
-    { id: "e1", kind: "goal", team: "home", player: "9", playerName: "Anna Meier", minute: 12, matchMs: 0, label: "Tor TuS Kirchberg · Anna Meier", exactTime: "00:12:00", createdAt: "x" },
+    { id: "e1", kind: "goal", team: "home", player: "9", playerName: "Anna Meier", minute: 12, matchMs: 0, label: "Tor FC Beispielstadt · Anna Meier", exactTime: "00:12:00", createdAt: "x" },
     { id: "e2", kind: "yellow", team: "away", player: "4", playerName: "Ben Kern", minute: 30, matchMs: 0, label: "Gelb Ben Kern", exactTime: "00:30:00", createdAt: "x" },
     { id: "e3", kind: "note", team: undefined, minute: 5, matchMs: 0, label: "Vorkommnis", text: "Anna Meier verletzt am Knie", exactTime: "00:05:00", createdAt: "x" },
     { id: "e4", kind: "substitution", team: "home", playerIn: "14", playerInName: "Kim Musterkind", playerOut: "9", playerOutName: "Anna Meier", minute: 40, matchMs: 0, label: "Wechsel #9 -> #14", exactTime: "00:40:00", createdAt: "x" },
@@ -40,7 +40,7 @@ describe("public live ticker", () => {
     const view = await SELF.fetch(publicUrl(token)); // no cookie: public
     expect(view.status).toBe(200);
     const body = await view.json<{ homeTeam: string; awayTeam: string; homeScore: number; awayScore: number; phase: string; events: { minute: number; team: string | null; label: string; detail?: string }[] }>();
-    expect(body).toMatchObject({ homeTeam: "TuS Kirchberg", awayTeam: "SV Testverein", homeScore: 1, awayScore: 0, phase: "firstHalf" });
+    expect(body).toMatchObject({ homeTeam: "FC Beispielstadt", awayTeam: "SV Testverein", homeScore: 1, awayScore: 0, phase: "firstHalf" });
     expect(body.events).toEqual([
       { minute: 12, team: "home", label: "Tor", detail: "#9" },
       { minute: 30, team: "away", label: "Gelbe Karte", detail: "#4" },
