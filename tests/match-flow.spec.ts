@@ -112,3 +112,34 @@ test("bleibt auf schmalen Smartphones vollständig bedienbar", async ({ page }, 
   await expect(page.getByRole("button", { name: "Ereignis speichern" })).toBeInViewport();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
+
+test("weist an der Halbzeit auf Bankspieler hin, die noch nicht gespielt haben", async ({ page }) => {
+  await page.clock.install();
+  await openApp(page);
+  await page.getByLabel("Name der Gastmannschaft").fill("SV Kader");
+  await page.locator("select").first().selectOption("custom");
+  await page.locator('input[type="number"]').fill("1");
+  await page.getByRole("button", { name: "Mannschaftsaufstellungen" }).click();
+  const away = page.locator(".roster-editor > div").nth(1);
+  await away.locator("input[type='file']").setInputFiles({
+    name: "team.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from("Name Künstlername;Vorname Rufname;Geb.\nMeier ;Anna (w) ;01.01.2015\nKern ;Ben (m) ;02.02.2015", "utf-8"),
+  });
+  // The fake clock (below) freezes the "2 Spieler importiert" toast's own
+  // auto-dismiss setTimeout too, so without fast-forwarding past it here it
+  // would stay on screen and intermittently occlude the roster rows.
+  await page.clock.fastForward(3000);
+  // Row text lives in <input> values, so hasText can't match it — go by
+  // order instead: Meier (row 0) leaves group-out once marked "start", so
+  // Kern (originally row 1) becomes row 0 for the next click.
+  const outRows = away.locator(".roster-group.group-out .roster-table tbody tr");
+  await outRows.nth(0).locator(".status-seg.seg-start").click();
+  await outRows.nth(0).locator(".status-seg.seg-bench").click();
+  await page.getByRole("button", { name: "Mannschaftsaufstellungen" }).click();
+
+  await page.getByRole("button", { name: "Spiel starten" }).click();
+  await page.clock.fastForward(65_000);
+  await page.getByRole("button", { name: "Halbzeit", exact: true }).click();
+  await expect(page.getByText(/Noch nicht eingesetzt: .*Ben Kern/)).toBeVisible();
+});

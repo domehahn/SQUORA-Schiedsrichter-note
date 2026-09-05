@@ -361,17 +361,29 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
       : { ...freezeClock(state, timestamp), updatedAt: nowIso() });
   };
 
+  /** " · Noch nicht eingesetzt: A, B" for bench players (either side) with
+   * zero pitch time so far — a nudge at exactly the moments a coach/ref
+   * would naturally think about who to bring on (halftime) or review after
+   * the fact (full time), without needing to open the Spielzeiten panel. */
+  const benchNudgeSuffix = (state: MatchState, uptoMs: number): string => {
+    const names = (["home", "away"] as const).flatMap((side) =>
+      playerTimes(state, side, uptoMs).filter((entry) => entry.status === "bench" && !entry.hasPlayed).map((entry) => entry.name || `#${entry.number}`),
+    );
+    return names.length ? ` · Noch nicht eingesetzt: ${names.join(", ")}` : "";
+  };
+
   const finishFirstHalf = () => {
     if (!periodUnlocked) return;
     const timestamp = Date.now();
     setNow(timestamp);
     const snapshot = match;
+    const uptoMs = matchTimeMs(match, timestamp);
     setMatch((state) => {
       const frozen = freezeClock(state, timestamp);
       return { ...addPeriodEvent(frozen, `Halbzeit${stoppageSuffix(state)}`, timestamp), phase: "halfTime", breakStartedAt: new Date(timestamp).toISOString(), announcedStoppageMin: 0, updatedAt: nowIso() };
     });
     buzz("half");
-    flash("Halbzeit gespeichert", snapshot);
+    flash(`Halbzeit gespeichert${benchNudgeSuffix(match, uptoMs)}`, snapshot);
   };
 
   const startSecondHalf = () => {
@@ -386,12 +398,13 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
     const timestamp = Date.now();
     setNow(timestamp);
     const snapshot = match;
+    const uptoMs = matchTimeMs(match, timestamp);
     setMatch((state) => {
       const frozen = freezeClock(state, timestamp);
       return { ...addPeriodEvent(frozen, `Spielende${stoppageSuffix(state)}`, timestamp), phase: "finished", finishedAt: new Date(timestamp).toISOString(), announcedStoppageMin: 0, updatedAt: nowIso() };
     });
     buzz("end");
-    flash("Spielbericht ist abgeschlossen", snapshot);
+    flash(`Spielbericht ist abgeschlossen${benchNudgeSuffix(match, uptoMs)}`, snapshot);
   };
 
   const startExtraTime = () => {
