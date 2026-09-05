@@ -1,7 +1,7 @@
 import { listClubs, createClub, getClub, deleteClub, cancelClubDeletion } from "./api/clubs";
 import { deleteAccount } from "./api/account";
 import { exportClub } from "./api/export";
-import { login, logout, me, register } from "./api/auth";
+import { forgotPassword, login, logout, me, register, resetPassword } from "./api/auth";
 import { acceptInvitation, createInvitation, listInvitations, revokeInvitation, viewInvitation } from "./api/invitations";
 import { disableLiveShare, enableLiveShare, getPublicLive } from "./api/live";
 import { createMatch, deleteMatch, getMatch, listMatches, updateMatch } from "./api/matches";
@@ -13,16 +13,10 @@ import { confirmDfbnetImport, createDfbnetImport, listDfbnetImports } from "./ap
 import { clearPlayers, createPlayer, deletePlayer, listPlayers, updatePlayer } from "./api/players";
 import { requireAuth, type AuthContext } from "./auth/session";
 import { errorResponse, HttpError, recordRequest, SECURITY_HEADERS, withHeaders } from "./core/http";
+import { MOUNT_PATH } from "./core/mount-path";
 import { readLegacy } from "./legacy/kv-migration";
 import { checkAndAlert } from "./services/alerting";
 import { runRetention } from "./services/retention";
-
-/**
- * The application is mounted at squora.de/schiedsrichter-note/. Every incoming
- * path is normalised by stripping this prefix, and every outgoing URL the Worker
- * emits (login page assets, form actions, redirects) is prefixed with it.
- */
-const MOUNT_PATH = "/schiedsrichter-note";
 
 function relativePath(pathname: string): string {
   return pathname === MOUNT_PATH ? "/" : pathname.startsWith(`${MOUNT_PATH}/`) ? pathname.slice(MOUNT_PATH.length) : pathname;
@@ -30,11 +24,33 @@ function relativePath(pathname: string): string {
 
 function loginHtml(error = ""): string {
   const message = error ? `<div class="error" role="alert">${error}</div>` : "";
-  return `<!doctype html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#0b2559"><title>Anmelden · SQUORA Schiedsrichter Note</title><link rel="stylesheet" href="${MOUNT_PATH}/login.css"></head><body><main><div class="brand"><strong>SQUORA</strong><small>Schiedsrichter Note</small></div><span class="eyebrow">Geschützter Bereich</span><h1>Willkommen zurück</h1><p>Melde dich an, um deine digitale Spielnotiz zu öffnen.</p>${message}<form method="post" action="${MOUNT_PATH}/auth/login"><div class="field"><label for="email">E-Mail-Adresse</label><input id="email" name="email" type="email" autocomplete="username" maxlength="254" placeholder=" " required autofocus></div><div class="field"><label for="password">Passwort</label><input id="password" name="password" type="password" autocomplete="current-password" maxlength="1024" placeholder=" " required></div><button type="submit">Anmelden</button></form></main></body></html>`;
+  return `<!doctype html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#0b2559"><title>Anmelden · SQUORA Schiedsrichter Note</title><link rel="stylesheet" href="${MOUNT_PATH}/login.css"></head><body><main><div class="brand"><strong>SQUORA</strong><small>Schiedsrichter Note</small></div><span class="eyebrow">Geschützter Bereich</span><h1>Willkommen zurück</h1><p>Melde dich an, um deine digitale Spielnotiz zu öffnen.</p>${message}<form method="post" action="${MOUNT_PATH}/auth/login"><div class="field"><label for="email">E-Mail-Adresse</label><input id="email" name="email" type="email" autocomplete="username" maxlength="254" placeholder=" " required autofocus></div><div class="field"><label for="password">Passwort</label><input id="password" name="password" type="password" autocomplete="current-password" maxlength="1024" placeholder=" " required></div><button type="submit">Anmelden</button></form><p class="secondary-link"><a href="${MOUNT_PATH}/auth/forgot-password">Passwort vergessen?</a></p></main></body></html>`;
 }
 
 function loginPage(requestId: string, error = "", status = 200): Response {
   return withHeaders(new Response(loginHtml(error), { status, headers: { "Content-Type": "text/html; charset=utf-8" } }), requestId, true);
+}
+
+function forgotPasswordHtml(message = "", isError = false): string {
+  const notice = message ? `<div class="${isError ? "error" : "notice"}" role="${isError ? "alert" : "status"}">${message}</div>` : "";
+  const form = message && !isError ? "" : `<form method="post" action="${MOUNT_PATH}/auth/forgot-password"><div class="field"><label for="email">E-Mail-Adresse</label><input id="email" name="email" type="email" autocomplete="username" maxlength="254" placeholder=" " required autofocus></div><button type="submit">Link anfordern</button></form>`;
+  return `<!doctype html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#0b2559"><title>Passwort vergessen · SQUORA Schiedsrichter Note</title><link rel="stylesheet" href="${MOUNT_PATH}/login.css"></head><body><main><div class="brand"><strong>SQUORA</strong><small>Schiedsrichter Note</small></div><span class="eyebrow">Passwort zurücksetzen</span><h1>Passwort vergessen?</h1><p>Gib deine E-Mail-Adresse ein — wir schicken dir einen Link zum Zurücksetzen.</p>${notice}${form}<p><a href="${MOUNT_PATH}/">Zurück zur Anmeldung</a></p></main></body></html>`;
+}
+
+function forgotPasswordPage(requestId: string, message = "", isError = false, status = 200): Response {
+  return withHeaders(new Response(forgotPasswordHtml(message, isError), { status, headers: { "Content-Type": "text/html; charset=utf-8" } }), requestId, true);
+}
+
+function resetPasswordHtml(token: string, error = "", done = false): string {
+  if (done) {
+    return `<!doctype html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#0b2559"><title>Passwort geändert · SQUORA Schiedsrichter Note</title><link rel="stylesheet" href="${MOUNT_PATH}/login.css"></head><body><main><div class="brand"><strong>SQUORA</strong><small>Schiedsrichter Note</small></div><span class="eyebrow">Passwort zurücksetzen</span><h1>Passwort geändert</h1><div class="notice" role="status">Dein Passwort wurde geändert. Du kannst dich jetzt anmelden.</div><p><a href="${MOUNT_PATH}/">Zur Anmeldung</a></p></main></body></html>`;
+  }
+  const message = error ? `<div class="error" role="alert">${error}</div>` : "";
+  return `<!doctype html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#0b2559"><title>Neues Passwort · SQUORA Schiedsrichter Note</title><link rel="stylesheet" href="${MOUNT_PATH}/login.css"></head><body><main><div class="brand"><strong>SQUORA</strong><small>Schiedsrichter Note</small></div><span class="eyebrow">Passwort zurücksetzen</span><h1>Neues Passwort</h1>${message}<form method="post" action="${MOUNT_PATH}/auth/reset-password"><input type="hidden" name="token" value="${token}"><div class="field"><label for="password">Neues Passwort (mind. 12 Zeichen)</label><input id="password" name="password" type="password" autocomplete="new-password" minlength="12" maxlength="1024" placeholder=" " required autofocus></div><button type="submit">Passwort setzen</button></form></main></body></html>`;
+}
+
+function resetPasswordPage(requestId: string, token: string, error = "", status = 200): Response {
+  return withHeaders(new Response(resetPasswordHtml(token, error), { status, headers: { "Content-Type": "text/html; charset=utf-8" } }), requestId, true);
 }
 
 /**
@@ -59,6 +75,34 @@ async function formLogin(request: Request, env: Env, requestId: string): Promise
     return redirect(`${MOUNT_PATH}/`, requestId, response.headers.get("Set-Cookie") ?? undefined);
   } catch (error) {
     if (error instanceof HttpError && (error.status === 401 || error.status === 429)) return loginPage(requestId, error.message, error.status);
+    throw error;
+  }
+}
+
+const TOKEN_RE = /^[A-Za-z0-9_-]{20,64}$/u;
+
+async function formForgotPassword(request: Request, env: Env, requestId: string): Promise<Response> {
+  try {
+    const response = await forgotPassword(request, env, requestId);
+    const body = await response.json<{ message: string }>();
+    return forgotPasswordPage(requestId, body.message, false);
+  } catch (error) {
+    if (error instanceof HttpError && (error.status === 422 || error.status === 429)) return forgotPasswordPage(requestId, error.message, true, error.status);
+    throw error;
+  }
+}
+
+async function formResetPassword(request: Request, env: Env, requestId: string): Promise<Response> {
+  const form = request.clone();
+  try {
+    await resetPassword(request, env, requestId);
+    return withHeaders(new Response(resetPasswordHtml("", "", true), { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } }), requestId, true);
+  } catch (error) {
+    const data = new URLSearchParams(await form.text());
+    const token = data.get("token") ?? "";
+    if (error instanceof HttpError && (error.status === 400 || error.status === 422 || error.status === 429)) {
+      return resetPasswordPage(requestId, TOKEN_RE.test(token) ? token : "", error.message, error.status);
+    }
     throw error;
   }
 }
@@ -245,6 +289,15 @@ export default {
       if (path === "/auth/login" && request.method === "POST") response = await formLogin(request, env, requestId);
       else if (path === "/api/v1/auth/login" && request.method === "POST") response = await login(request, env, requestId);
       else if (path === "/api/v1/auth/register" && request.method === "POST") response = await register(request, env, requestId);
+      else if (path === "/auth/forgot-password" && request.method === "GET") response = forgotPasswordPage(requestId);
+      else if (path === "/auth/forgot-password" && request.method === "POST") response = await formForgotPassword(request, env, requestId);
+      else if (path === "/api/v1/auth/forgot-password" && request.method === "POST") response = await forgotPassword(request, env, requestId);
+      else if (path === "/auth/reset-password" && request.method === "GET") {
+        const token = url.searchParams.get("token") ?? "";
+        response = resetPasswordPage(requestId, TOKEN_RE.test(token) ? token : "");
+      }
+      else if (path === "/auth/reset-password" && request.method === "POST") response = await formResetPassword(request, env, requestId);
+      else if (path === "/api/v1/auth/reset-password" && request.method === "POST") response = await resetPassword(request, env, requestId);
       else if (publicInvite && request.method === "GET") response = await viewInvitation(request, env, decodeURIComponent(publicInvite[1]), requestId);
       else if (publicLiveApi && request.method === "GET") response = await getPublicLive(request, env, decodeURIComponent(publicLiveApi[1]), requestId);
       else if (publicLivePage && request.method === "GET") response = livePage(requestId);

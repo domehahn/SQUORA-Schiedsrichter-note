@@ -1,7 +1,7 @@
 import { env, SELF } from "cloudflare:test";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { sha256 } from "../auth/session";
-import { ORIGIN, USER_A, migrate, resetDb, seedUser } from "./helpers";
+import { ORIGIN, USER_A, USER_B, migrate, resetDb, seedUser } from "./helpers";
 
 describe("D1 authentication and revocable sessions", () => {
   beforeAll(migrate);
@@ -78,6 +78,99 @@ describe("D1 authentication and revocable sessions", () => {
     const cookie = login.headers.get("Set-Cookie")!;
     await env.DB.prepare("UPDATE users SET status='disabled' WHERE id=?").bind(USER_A).run();
     expect((await SELF.fetch(`${ORIGIN}/api/v1/me`, { headers: { Cookie: cookie } })).status).toBe(401);
+  });
+});
+
+describe("password reset", () => {
+  beforeAll(migrate);
+  beforeEach(resetDb);
+
+  const forgot = (email: string) => SELF.fetch(`${ORIGIN}/api/v1/auth/forgot-password`, {
+    method: "POST", headers: { Origin: ORIGIN, "Content-Type": "application/json" }, body: JSON.stringify({ email }),
+  });
+
+  it("gives the same generic response whether or not the address is registered (no account enumeration)", async () => {
+    await seedUser(USER_A, "user-a@example.invalid");
+    const known = await forgot("user-a@example.invalid");
+    const unknown = await forgot("nobody@example.invalid");
+    expect(known.status).toBe(200);
+    expect(unknown.status).toBe(200);
+    expect(await known.text()).toBe(await unknown.text());
+  });
+
+  it("mints a token only for a real, active account", async () => {
+    await seedUser(USER_A, "user-a@example.invalid");
+    await seedUser(USER_B, "user-b@example.invalid", "disabled");
+    await forgot("user-a@example.invalid");
+    await forgot("user-b@example.invalid");
+    await forgot("nobody@example.invalid");
+    const rows = await env.DB.prepare("SELECT user_id AS userId FROM password_reset_tokens").all<{ userId: string }>();
+    expect(rows.results.map((r) => r.userId)).toEqual([USER_A]);
+  });
+
+  async function issueToken(userId: string, options: { expired?: boolean; used?: boolean } = {}): Promise<string> {
+    const token = `AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA${crypto.randomUUID().replaceAll("-", "")}`;
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + (options.expired ? -1000 : 30 * 60_000)).toISOString();
+    await env.DB.prepare("INSERT INTO password_reset_tokens (id,user_id,token_hash,expires_at,used_at,created_at) VALUES (?,?,?,?,?,?)")
+      .bind(crypto.randomUUID(), userId, await sha256(token), expiresAt, options.used ? now.toISOString() : null, now.toISOString()).run();
+    return token;
+  }
+
+  it("resets the password with a valid token, then revokes every existing session", async () => {
+    await seedUser(USER_A, "user-a@example.invalid");
+    const login = await SELF.fetch(`${ORIGIN}/api/v1/auth/login`, { method: "POST", headers: { Origin: ORIGIN, "Content-Type": "application/json" }, body: JSON.stringify({ email: "user-a@example.invalid", password: "test-password" }) });
+    const oldCookie = login.headers.get("Set-Cookie")!;
+    const token = await issueToken(USER_A);
+
+    const reset = await SELF.fetch(`${ORIGIN}/api/v1/auth/reset-password`, {
+      method: "POST", headers: { Origin: ORIGIN, "Content-Type": "application/json" }, body: JSON.stringify({ token, password: "new-password-123" }),
+    });
+    expect(reset.status).toBe(200);
+
+    expect((await SELF.fetch(`${ORIGIN}/api/v1/me`, { headers: { Cookie: oldCookie } })).status).toBe(401);
+    const relogin = await SELF.fetch(`${ORIGIN}/api/v1/auth/login`, { method: "POST", headers: { Origin: ORIGIN, "Content-Type": "application/json" }, body: JSON.stringify({ email: "user-a@example.invalid", password: "new-password-123" }) });
+    expect(relogin.status).toBe(200);
+    const oldPasswordLogin = await SELF.fetch(`${ORIGIN}/api/v1/auth/login`, { method: "POST", headers: { Origin: ORIGIN, "Content-Type": "application/json" }, body: JSON.stringify({ email: "user-a@example.invalid", password: "test-password" }) });
+    expect(oldPasswordLogin.status).toBe(401);
+  });
+
+  it("is single-use — a second attempt with the same token fails", async () => {
+    await seedUser(USER_A, "user-a@example.invalid");
+    const token = await issueToken(USER_A);
+    const first = await SELF.fetch(`${ORIGIN}/api/v1/auth/reset-password`, { method: "POST", headers: { Origin: ORIGIN, "Content-Type": "application/json" }, body: JSON.stringify({ token, password: "first-new-password" }) });
+    expect(first.status).toBe(200);
+    const second = await SELF.fetch(`${ORIGIN}/api/v1/auth/reset-password`, { method: "POST", headers: { Origin: ORIGIN, "Content-Type": "application/json" }, body: JSON.stringify({ token, password: "second-new-password" }) });
+    expect(second.status).toBe(400);
+  });
+
+  it("rejects an expired token, an already-used token, and a token for a disabled account", async () => {
+    await seedUser(USER_A, "user-a@example.invalid");
+    await seedUser(USER_B, "user-b@example.invalid", "disabled");
+    const expired = await issueToken(USER_A, { expired: true });
+    const used = await issueToken(USER_A, { used: true });
+    const forDisabled = await issueToken(USER_B);
+    for (const token of [expired, used, forDisabled]) {
+      const res = await SELF.fetch(`${ORIGIN}/api/v1/auth/reset-password`, { method: "POST", headers: { Origin: ORIGIN, "Content-Type": "application/json" }, body: JSON.stringify({ token, password: "irrelevant-password" }) });
+      expect(res.status).toBe(400);
+    }
+  });
+
+  it("rejects a password under 12 characters", async () => {
+    await seedUser(USER_A, "user-a@example.invalid");
+    const token = await issueToken(USER_A);
+    const res = await SELF.fetch(`${ORIGIN}/api/v1/auth/reset-password`, { method: "POST", headers: { Origin: ORIGIN, "Content-Type": "application/json" }, body: JSON.stringify({ token, password: "short" }) });
+    expect(res.status).toBe(422);
+  });
+
+  it("serves the server-rendered forgot-password and reset-password pages", async () => {
+    const forgotPage = await SELF.fetch(`${ORIGIN}/auth/forgot-password`);
+    expect(forgotPage.status).toBe(200);
+    expect(await forgotPage.text()).toContain("Passwort vergessen");
+
+    const resetPage = await SELF.fetch(`${ORIGIN}/auth/reset-password?token=anything`);
+    expect(resetPage.status).toBe(200);
+    expect(await resetPage.text()).toContain("Neues Passwort");
   });
 });
 

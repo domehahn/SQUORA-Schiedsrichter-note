@@ -5,6 +5,7 @@ export interface RetentionResult {
   audit: number;
   imports: number;
   invitations: number;
+  passwordResetTokens: number;
   purgedClubs: number;
 }
 
@@ -57,6 +58,13 @@ export async function runRetention(db: D1Database, now: Date = new Date()): Prom
     .prepare("DELETE FROM invitations WHERE status IN ('accepted','revoked','expired') AND updated_at < ?")
     .bind(daysAgo(INVITATION_RETENTION_DAYS))
     .run();
+  // Password-reset tokens are short-lived (30 min) by design; drop expired
+  // ones immediately and used ones after a short window (kept briefly for
+  // audit correlation, not because they're still valid — they're single-use).
+  const passwordResetTokens = await db
+    .prepare("DELETE FROM password_reset_tokens WHERE expires_at < ? OR (used_at IS NOT NULL AND used_at < ?)")
+    .bind(iso(now), daysAgo(7))
+    .run();
   const purgedClubs = await runClubPurge(db, now);
 
   return {
@@ -64,6 +72,7 @@ export async function runRetention(db: D1Database, now: Date = new Date()): Prom
     audit: audit.meta.changes ?? 0,
     imports: imports.meta.changes ?? 0,
     invitations: invitations.meta.changes ?? 0,
+    passwordResetTokens: passwordResetTokens.meta.changes ?? 0,
     purgedClubs: purgedClubs.length,
   };
 }

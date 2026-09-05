@@ -599,6 +599,10 @@ label:not(.tenant-check):not(.checkbox-field):not(.team):has(select:focus) > spa
 .save-button { display: inline-flex; align-items: center; gap: 8px; border: 0; background: var(--brand-gradient); color: white; box-shadow: 0 6px 16px rgba(11,37,89,.2); }
 .save-button svg { width: 16px; }
 .toast { position: fixed; z-index: 120; right: 24px; bottom: 24px; max-width: min(420px, calc(100vw - 32px)); display: flex; align-items: center; gap: 10px; border: 1px solid #b9e5d4; border-radius: 11px; background: #f0fcf7; color: #146849; padding: 12px 15px; box-shadow: 0 12px 35px rgba(11,56,42,.15); font-size: 11px; font-weight: 700; }
+.update-banner { position: sticky; top: 0; z-index: 130; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 10px 16px; background: var(--brand-gradient); color: #fff; font-size: 12px; font-weight: 750; }
+.update-banner svg { width: 15px; }
+.update-banner button { border: 1px solid rgba(255,255,255,.55); border-radius: 8px; padding: 5px 12px; background: rgba(255,255,255,.14); color: #fff; font-size: 11px; font-weight: 800; }
+.update-banner button:hover { background: rgba(255,255,255,.24); }
 .toast svg { width: 17px; }
 
 @media (max-width: 900px) {

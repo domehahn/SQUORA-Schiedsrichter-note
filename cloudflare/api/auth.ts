@@ -1,10 +1,12 @@
-import { createSession, expiredSessionCookie, optionalAuth, requireAuth, revokeAllSessions, revokeSession } from "../auth/session";
+import { createSession, expiredSessionCookie, optionalAuth, requireAuth, revokeAllSessions, revokeSession, sha256 } from "../auth/session";
 import { hashPassword, verifyPassword } from "../auth/password";
 import { acceptStatements, resolvePendingInvitation } from "./invitations";
 import { clientIp, enforceRateLimit } from "../core/rate-limit";
 import { HttpError, json, readJson, requireSameOrigin } from "../core/http";
+import { MOUNT_PATH } from "../core/mount-path";
 import { newId } from "../core/id";
 import { parseBody } from "../core/validation";
+import { sendEmail } from "../services/email";
 import { writeAudit } from "../services/audit-service";
 
 const DUMMY_HASH = "pbkdf2-sha256$100000*6$00000000000000000000000000000000$0000000000000000000000000000000000000000000000000000000000000000";
@@ -114,5 +116,98 @@ export async function logout(request: Request, env: Env, requestId: string, all 
     await writeAudit(env.DB, { userId: auth.userId, action: "LOGOUT", entityType: "session", metadata: { all } });
   }
   return setCookie(json({ ok: true }, requestId), expiredSessionCookie());
+}
+
+const RESET_TTL_MS = 30 * 60 * 1000;
+const GENERIC_RESET_MESSAGE = "Falls diese Adresse registriert ist, wurde eine E-Mail mit einem Link zum Zurücksetzen versendet.";
+
+/** A URL-safe 256-bit token; only its SHA-256 is ever stored (same convention as invitations/live-share). */
+function mintResetToken(): { token: string; tokenHashPromise: Promise<string> } {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  const token = btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
+  return { token, tokenHashPromise: sha256(token) };
+}
+
+/** Reads a JSON or form-urlencoded body into a plain object (mirrors login()'s dual handling — the reset pages are plain HTML forms, not the SPA). */
+async function readFormOrJson(request: Request, maxBytes: number): Promise<Record<string, unknown>> {
+  const contentType = request.headers.get("Content-Type") ?? "";
+  if (contentType.startsWith("application/json")) return (await readJson(request, maxBytes)) as Record<string, unknown>;
+  if (contentType.startsWith("application/x-www-form-urlencoded")) {
+    const bytes = new Uint8Array(await request.arrayBuffer());
+    if (bytes.byteLength > maxBytes) throw new HttpError(413, "PAYLOAD_TOO_LARGE", "The request payload is too large.");
+    const form = new URLSearchParams(new TextDecoder().decode(bytes));
+    return Object.fromEntries(form.entries());
+  }
+  throw new HttpError(415, "CONTENT_TYPE_REQUIRED", "A supported content type is required.");
+}
+
+/**
+ * Request a password-reset link. Always returns the same generic response
+ * regardless of whether the address is registered — no account enumeration.
+ * If it is, a single-use token is minted and emailed; the raw token is never
+ * logged, returned in the response, or stored (only its hash is). Email
+ * delivery failing (e.g. RESEND_API_KEY not configured yet) does not change
+ * the response, and is not fatal — it's logged server-side only.
+ */
+export async function forgotPassword(request: Request, env: Env, requestId: string): Promise<Response> {
+  requireSameOrigin(request);
+  await enforceRateLimit(env.LOGIN_RATE_LIMITER, [clientIp(request), "auth.forgot-password"]);
+  const body = parseBody(await readFormOrJson(request, 2048), { email: { kind: "string", min: 3, max: 254 } });
+  const email = (body.email as string).trim().toLowerCase();
+  const generic = json({ ok: true, message: GENERIC_RESET_MESSAGE }, requestId);
+
+  const user = await env.DB.prepare("SELECT id,email,display_name AS displayName FROM users WHERE email=? AND status='active'")
+    .bind(email).first<{ id: string; email: string; displayName: string }>();
+  if (!user) return generic;
+
+  const { token, tokenHashPromise } = mintResetToken();
+  const tokenHash = await tokenHashPromise;
+  const now = new Date();
+  await env.DB.prepare("INSERT INTO password_reset_tokens (id,user_id,token_hash,expires_at,created_at) VALUES (?,?,?,?,?)")
+    .bind(newId(), user.id, tokenHash, new Date(now.getTime() + RESET_TTL_MS).toISOString(), now.toISOString()).run();
+
+  const resetUrl = `${new URL(request.url).origin}${MOUNT_PATH}/auth/reset-password?token=${token}`;
+  const { sent } = await sendEmail(env, {
+    to: user.email,
+    subject: "Passwort zurücksetzen · SQUORA Schiedsrichter Note",
+    text: `Hallo ${user.displayName},\n\nüber den folgenden Link kannst du dein Passwort zurücksetzen (30 Minuten gültig):\n${resetUrl}\n\nWenn du das nicht angefordert hast, kannst du diese E-Mail ignorieren.`,
+    html: `<p>Hallo ${user.displayName},</p><p>über den folgenden Link kannst du dein Passwort zurücksetzen (30&nbsp;Minuten gültig):</p><p><a href="${resetUrl}">${resetUrl}</a></p><p>Wenn du das nicht angefordert hast, kannst du diese E-Mail ignorieren.</p>`,
+  });
+  await writeAudit(env.DB, { userId: user.id, action: "PASSWORD_RESET_REQUESTED", entityType: "user", entityId: user.id, metadata: { emailSent: sent } });
+  return generic;
+}
+
+/**
+ * Complete a password reset. The token is single-use (marked used
+ * immediately on success) and time-limited; every existing session for the
+ * account is revoked so a token that leaked alongside an already-compromised
+ * mailbox can't be replayed after the legitimate owner regains control.
+ */
+export async function resetPassword(request: Request, env: Env, requestId: string): Promise<Response> {
+  requireSameOrigin(request);
+  await enforceRateLimit(env.LOGIN_RATE_LIMITER, [clientIp(request), "auth.reset-password"]);
+  const body = parseBody(await readFormOrJson(request, 2048), {
+    token: { kind: "string", min: 20, max: 64 },
+    password: { kind: "string", min: 12, max: 1024 },
+  });
+  const invalid = new HttpError(400, "INVALID_TOKEN", "This reset link is invalid or has expired.");
+  const tokenHash = await sha256(body.token as string);
+  const now = new Date().toISOString();
+  const row = await env.DB.prepare(
+    `SELECT t.id,t.user_id AS userId FROM password_reset_tokens t JOIN users u ON u.id=t.user_id
+     WHERE t.token_hash=? AND t.used_at IS NULL AND t.expires_at>? AND u.status='active'`,
+  ).bind(tokenHash, now).first<{ id: string; userId: string }>();
+  if (!row) throw invalid;
+
+  const passwordHash = await hashPassword(body.password as string);
+  await env.DB.batch([
+    env.DB.prepare("UPDATE password_reset_tokens SET used_at=? WHERE id=?").bind(now, row.id),
+    env.DB.prepare("UPDATE users SET password_hash=?,updated_at=? WHERE id=?").bind(passwordHash, now, row.userId),
+  ]);
+  await revokeAllSessions(env.DB, row.userId);
+  await writeAudit(env.DB, { userId: row.userId, action: "PASSWORD_RESET_COMPLETED", entityType: "user", entityId: row.userId });
+  return json({ ok: true }, requestId);
 }
 
