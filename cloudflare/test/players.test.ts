@@ -1,6 +1,6 @@
 import { env, SELF } from "cloudflare:test";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { CLUB_A, CLUB_B, TEAM_A, TEAM_A2, TEAM_B, USER_A, ORIGIN, jsonHeaders, migrate, resetDb, seedTwoTenants } from "./helpers";
+import { authCookie, CLUB_A, CLUB_B, TEAM_A, TEAM_A2, TEAM_B, USER_A, ORIGIN, jsonHeaders, migrate, resetDb, seedTwoTenants } from "./helpers";
 
 const url = (club: string, team: string, suffix = "") => `${ORIGIN}/api/v1/clubs/${club}/teams/${team}/players${suffix}`;
 
@@ -97,5 +97,35 @@ describe("team roster (players) CRUD", () => {
     const body = JSON.stringify({ name: "A", externalId: "SYN-1" });
     expect((await SELF.fetch(url(CLUB_A, TEAM_A), { method: "POST", headers: jsonHeaders(cookieA), body })).status).toBe(201);
     expect((await SELF.fetch(url(CLUB_A, TEAM_A), { method: "POST", headers: jsonHeaders(cookieA), body: JSON.stringify({ name: "B", externalId: "SYN-1" }) })).status).toBe(409);
+  });
+
+  it("omits pass number and birthdate for a viewer role, but includes name and shirt number", async () => {
+    const { cookieA } = await seedTwoTenants();
+    await SELF.fetch(url(CLUB_A, TEAM_A), {
+      method: "POST", headers: jsonHeaders(cookieA),
+      body: JSON.stringify({ name: "Max Testspieler", shirtNumber: "7", passNumber: "0100-0001", birthdate: "01.01.2014" }),
+    });
+
+    await env.DB.prepare("UPDATE memberships SET role='viewer' WHERE club_id=? AND user_id=?").bind(CLUB_A, USER_A).run();
+    const viewerCookie = await authCookie(USER_A);
+    const list = await (await SELF.fetch(url(CLUB_A, TEAM_A), { headers: { Cookie: viewerCookie } })).json<{ players: Record<string, unknown>[] }>();
+    expect(list.players).toHaveLength(1);
+    expect(list.players[0]).toMatchObject({ name: "Max Testspieler", shirtNumber: "7" });
+    expect(Object.hasOwn(list.players[0], "passNumber")).toBe(false);
+    expect(Object.hasOwn(list.players[0], "birthdate")).toBe(false);
+  });
+
+  it("includes pass number and birthdate for referee, referee_manager, club_admin and club_owner", async () => {
+    const { cookieA } = await seedTwoTenants();
+    await SELF.fetch(url(CLUB_A, TEAM_A), {
+      method: "POST", headers: jsonHeaders(cookieA),
+      body: JSON.stringify({ name: "Anna Beispiel", passNumber: "0100-0002", birthdate: "02.02.2014" }),
+    });
+    for (const role of ["referee", "referee_manager", "club_admin", "club_owner"]) {
+      await env.DB.prepare("UPDATE memberships SET role=? WHERE club_id=? AND user_id=?").bind(role, CLUB_A, USER_A).run();
+      const cookie = await authCookie(USER_A);
+      const list = await (await SELF.fetch(url(CLUB_A, TEAM_A), { headers: { Cookie: cookie } })).json<{ players: { passNumber: string; birthdate: string }[] }>();
+      expect(list.players[0], `role=${role}`).toMatchObject({ passNumber: "0100-0002", birthdate: "02.02.2014" });
+    }
   });
 });

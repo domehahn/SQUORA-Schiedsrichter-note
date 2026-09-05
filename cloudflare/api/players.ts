@@ -36,11 +36,21 @@ function resolveName(body: Record<string, unknown>): { firstName: string | null;
   return { firstName, lastName, name };
 }
 
-/** The relational roster for the referee's own team (Jugend). Holds pass number + birthdate for the passport check. */
+/**
+ * The relational roster for the referee's own team (Jugend). Holds pass
+ * number + birthdate for the passport check, but those two fields are only
+ * included for a caller whose role also carries players.identity.read
+ * (club_owner/club_admin/referee_manager/referee — not viewer): least
+ * privilege means omitting the fields entirely rather than sending `null`,
+ * so a client can't infer "no pass number on file" vs "not allowed to see it".
+ */
 export async function listPlayers(env: Env, auth: AuthContext, clubId: string, teamId: string, requestId: string): Promise<Response> {
   const context = await requireTeamAccess(env.DB, auth, clubId, teamId, "players.read");
   const rows = await env.DB.prepare(`${SELECT} WHERE club_id=? AND team_id=? ORDER BY last_name,name,id`).bind(context.clubId, context.teamId).all<PlayerRow>();
-  return json({ players: rows.results }, requestId);
+  const players = context.permissions.includes("players.identity.read")
+    ? rows.results
+    : rows.results.map(({ passNumber: _passNumber, birthdate: _birthdate, ...rest }) => rest);
+  return json({ players }, requestId);
 }
 
 export async function createPlayer(request: Request, env: Env, auth: AuthContext, clubId: string, teamId: string, requestId: string): Promise<Response> {
