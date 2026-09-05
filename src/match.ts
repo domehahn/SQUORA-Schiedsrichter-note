@@ -477,6 +477,86 @@ export function substitutionCount(events: MatchEvent[], side: TeamSide): number 
   return events.filter((event) => event.kind === "substitution" && event.team === side).length;
 }
 
+export interface PlayerTime {
+  key: string;
+  number: string;
+  name: string;
+  status?: LineupStatus;
+  /** Cumulative time on the pitch across every spell (re-entry after being subbed off is allowed at most age groups). */
+  onPitchMs: number;
+  /** True once the player has accumulated any tracked pitch time. */
+  hasPlayed: boolean;
+  /** Still on the pitch as of `uptoMs`. */
+  currentlyOn: boolean;
+}
+
+/**
+ * Per-player time on the pitch for one side, derived purely from the
+ * roster's start/bench status and the chronological order of substitution
+ * events — matchMs is already a continuous "elapsed playing time" counter
+ * (breaks are excluded), so it can be used directly as a timeline. Supports
+ * a player going back on after being subbed off, since several age-group
+ * rules explicitly allow re-entry ("Wiedereinwechseln zulässig", see
+ * ageRules). Players marked "out" (not nominated for this match) are
+ * excluded entirely.
+ */
+export function playerTimes(state: MatchState, side: TeamSide, uptoMs: number): PlayerTime[] {
+  const roster = side === "home" ? state.homeRoster : state.awayRoster;
+  const entries = new Map<string, PlayerTime>();
+  const onSince = new Map<string, number>();
+
+  for (const player of roster) {
+    if (player.status === "out") continue;
+    const key = playerKey(player.number, player.name);
+    if (!key || entries.has(key)) continue;
+    entries.set(key, { key, number: player.number, name: player.name, status: player.status, onPitchMs: 0, hasPlayed: false, currentlyOn: false });
+    if (player.status === "start") onSince.set(key, 0);
+  }
+
+  const goOff = (key: string, atMs: number) => {
+    const since = onSince.get(key);
+    if (since === undefined) return;
+    onSince.delete(key);
+    const entry = entries.get(key);
+    if (!entry) return;
+    entry.onPitchMs += Math.max(0, atMs - since);
+  };
+  const goOn = (key: string, atMs: number) => {
+    if (!key || onSince.has(key)) return;
+    onSince.set(key, atMs);
+  };
+
+  const subs = state.events
+    .filter((event): event is MatchEvent & { matchMs: number } => event.kind === "substitution" && event.team === side)
+    .slice()
+    .sort((a, b) => a.matchMs - b.matchMs);
+  for (const event of subs) {
+    const outKey = playerKey(event.playerOut, event.playerOutName);
+    const inKey = playerKey(event.playerIn, event.playerInName);
+    if (outKey) goOff(outKey, event.matchMs);
+    if (inKey) {
+      if (!entries.has(inKey)) {
+        entries.set(inKey, { key: inKey, number: event.playerIn ?? "", name: event.playerInName ?? "", status: "bench", onPitchMs: 0, hasPlayed: false, currentlyOn: false });
+      }
+      goOn(inKey, event.matchMs);
+    }
+  }
+
+  for (const [key, since] of onSince) {
+    const entry = entries.get(key);
+    if (!entry) continue;
+    entry.onPitchMs += Math.max(0, uptoMs - since);
+    entry.currentlyOn = true;
+  }
+  for (const entry of entries.values()) entry.hasPlayed = entry.onPitchMs > 0;
+
+  return [...entries.values()].sort((a, b) => {
+    const numA = Number(a.number); const numB = Number(b.number);
+    const rank = (Number.isFinite(numA) ? numA : Infinity) - (Number.isFinite(numB) ? numB : Infinity);
+    return rank || a.name.localeCompare(b.name, "de");
+  });
+}
+
 export interface PlayerSanction {
   key: string;
   player: string;

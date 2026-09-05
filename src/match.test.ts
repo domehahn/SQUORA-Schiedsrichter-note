@@ -7,11 +7,14 @@ import {
   isSingleHalfAgeGroup,
   matchTimeMs,
   normalizeMatch,
+  playerTimes,
   sanctions,
   score,
   shootoutTally,
   substitutionCount,
   type MatchEvent,
+  type MatchState,
+  type Player,
   type ShootoutAttempt,
 } from "./match";
 
@@ -191,5 +194,94 @@ describe("normalizeMatch", () => {
     expect(normalizeMatch({ matchName: "Funino Feld 2, Runde 3" }).matchName).toBe("Funino Feld 2, Runde 3");
     expect(createMatch().matchName).toBe("");
     expect(normalizeMatch({}).matchName).toBe("");
+  });
+});
+
+describe("playerTimes", () => {
+  const player = (number: string, name: string, status: Player["status"]): Player => ({ id: `p${number}`, number, name, status });
+
+  function baseMatch(overrides: Partial<MatchState> = {}): MatchState {
+    return createMatch({
+      homeRoster: [
+        player("1", "Torwart Testspieler", "start"),
+        player("5", "Anna Beispiel", "start"),
+        player("9", "Kim Musterkind", "start"),
+        player("12", "Bank Eins", "bench"),
+        player("13", "Bank Zwei", "bench"),
+        player("14", "Nicht Nominiert", "out"),
+      ],
+      ...overrides,
+    });
+  }
+
+  it("zählt Startspieler ab Anpfiff (0) als bereits eingesetzt, sobald Spielzeit vergangen ist", () => {
+    const state = baseMatch();
+    const times = playerTimes(state, "home", 10 * 60_000);
+    const starter = times.find((entry) => entry.key === "9")!;
+    expect(starter.onPitchMs).toBe(10 * 60_000);
+    expect(starter.hasPlayed).toBe(true);
+    expect(starter.currentlyOn).toBe(true);
+  });
+
+  it("markiert Bankspieler ohne Einwechslung als noch nicht eingesetzt", () => {
+    const state = baseMatch();
+    const times = playerTimes(state, "home", 20 * 60_000);
+    const bench = times.filter((entry) => entry.status === "bench");
+    expect(bench).toHaveLength(2);
+    expect(bench.every((entry) => entry.hasPlayed === false && entry.onPitchMs === 0)).toBe(true);
+  });
+
+  it("berechnet die Spielzeit anhand einer Auswechslung", () => {
+    const state = baseMatch({
+      events: [ev({
+        kind: "substitution", team: "home", matchMs: 15 * 60_000,
+        playerOut: "9", playerOutName: "Kim Musterkind", playerIn: "12", playerInName: "Bank Eins",
+      })],
+    });
+    const times = playerTimes(state, "home", 30 * 60_000);
+    const out = times.find((entry) => entry.key === "9")!;
+    const inn = times.find((entry) => entry.key === "12")!;
+    expect(out.onPitchMs).toBe(15 * 60_000);
+    expect(out.hasPlayed).toBe(true);
+    expect(out.currentlyOn).toBe(false);
+    expect(inn.onPitchMs).toBe(15 * 60_000);
+    expect(inn.hasPlayed).toBe(true);
+    expect(inn.currentlyOn).toBe(true);
+  });
+
+  it("unterstützt eine erneute Einwechslung (Wiedereinwechseln zulässig) und summiert mehrere Einsätze", () => {
+    const state = baseMatch({
+      events: [
+        ev({ kind: "substitution", team: "home", matchMs: 10 * 60_000, playerOut: "9", playerOutName: "Kim Musterkind", playerIn: "12", playerInName: "Bank Eins" }),
+        ev({ kind: "substitution", team: "home", matchMs: 20 * 60_000, playerOut: "12", playerOutName: "Bank Eins", playerIn: "9", playerInName: "Kim Musterkind" }),
+      ],
+    });
+    const times = playerTimes(state, "home", 30 * 60_000);
+    const musterkind = times.find((entry) => entry.key === "9")!;
+    // 0-10 min (Start) + 20-30 min (zweiter Einsatz) = 20 min
+    expect(musterkind.onPitchMs).toBe(20 * 60_000);
+    expect(musterkind.currentlyOn).toBe(true);
+    const bankEins = times.find((entry) => entry.key === "12")!;
+    expect(bankEins.onPitchMs).toBe(10 * 60_000);
+    expect(bankEins.currentlyOn).toBe(false);
+  });
+
+  it("schließt nicht nominierte Spieler aus", () => {
+    const times = playerTimes(baseMatch(), "home", 10 * 60_000);
+    expect(times.some((entry) => entry.key === "14")).toBe(false);
+  });
+
+  it("legt einen Eintrag für einen eingewechselten Spieler an, der nicht im Kader stand", () => {
+    const state = baseMatch({
+      events: [ev({
+        kind: "substitution", team: "home", matchMs: 5 * 60_000,
+        playerOut: "9", playerOutName: "Kim Musterkind", playerIn: "99", playerInName: "Nachmeldung",
+      })],
+    });
+    const times = playerTimes(state, "home", 10 * 60_000);
+    const late = times.find((entry) => entry.key === "99")!;
+    expect(late.name).toBe("Nachmeldung");
+    expect(late.status).toBe("bench");
+    expect(late.onPitchMs).toBe(5 * 60_000);
   });
 });

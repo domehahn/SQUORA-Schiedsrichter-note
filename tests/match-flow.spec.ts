@@ -53,6 +53,12 @@ test("führt ein Jugendspiel mit Tor, Wechsel, Karten und Spielende", async ({ p
   await page.getByRole("button", { name: "Ereignis speichern" }).click();
   await expect(page.getByText("Wechsel SV Blau · Nr. 8 raus, Nr. 14 rein", { exact: true })).toBeVisible();
 
+  await page.getByRole("button", { name: "Spielzeiten" }).click();
+  const homePlaytime = page.locator(".sanction-col", { hasText: "SV Blau" });
+  await expect(homePlaytime.locator("tr", { hasText: "14" })).toBeVisible();
+  await expect(homePlaytime.locator("tr", { hasText: "14" })).toContainText("✓");
+  await page.getByRole("button", { name: "Spielzeiten" }).click();
+
   await page.clock.fastForward(65_000);
   await page.getByRole("button", { name: "Spielende", exact: true }).click();
   await expect(page.getByText("Beendet", { exact: true })).toBeVisible();

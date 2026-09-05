@@ -71,6 +71,9 @@ test("Dunkelmodus: Buttons und Texte bleiben lesbar (WCAG-Kontrast)", async ({ p
   // the area a user reported as unreadable.
   await page.getByRole("button", { name: "Mannschaftsaufstellungen" }).click();
   await check(page, "Mannschaftsaufstellungen (Skizze + Kader-Tabelle)");
+
+  await page.getByRole("button", { name: "Spielzeiten" }).click();
+  await check(page, "Spielzeiten");
 });
 
 async function check(page: import("@playwright/test").Page, context: string): Promise<void> {

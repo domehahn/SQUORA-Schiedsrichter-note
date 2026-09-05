@@ -43,6 +43,7 @@ import {
   matchDateLabel,
   matchTimeMs,
   normalizeMatch,
+  playerTimes,
   sanctions,
   score,
   shootoutTally,
@@ -142,7 +143,7 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [printTarget, setPrintTarget] = useState<MatchState | null>(null);
   const [printTournament, setPrintTournament] = useState<Tournament | null>(null);
-  const [openPanel, setOpenPanel] = useState<"cards" | "meta" | "roster" | "myroster" | "teams" | "tournaments" | "stats" | null>(null);
+  const [openPanel, setOpenPanel] = useState<"cards" | "playtime" | "meta" | "roster" | "myroster" | "teams" | "tournaments" | "stats" | null>(null);
   const [showLog, setShowLog] = useState(true);
   const [statsRange, setStatsRange] = useState(() => seasonBounds());
 
@@ -1031,6 +1032,60 @@ function App({ userId, tenant, team, cryptoKey, onLock }: AppProps) {
                         </li>
                       ))}
                     </ul>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </CollapsibleSection>
+
+        <CollapsibleSection
+          id="playtime"
+          icon="stopwatch"
+          title="Spielzeiten"
+          hint="Einsatzzeit je Spieler aus den Auswechslungen – zeigt, wer von der Bank noch nicht gespielt hat."
+          badge={(() => {
+            const uptoMs = matchTimeMs(match, now);
+            const notPlayed = [...playerTimes(match, "home", uptoMs), ...playerTimes(match, "away", uptoMs)]
+              .filter((entry) => entry.status === "bench" && !entry.hasPlayed).length;
+            return notPlayed || undefined;
+          })()}
+          open={openPanel === "playtime"}
+          onToggle={() => setOpenPanel((current) => (current === "playtime" ? null : "playtime"))}
+        >
+          <div className="sanction-grid">
+            {(["home", "away"] as const).map((side) => {
+              const uptoMs = matchTimeMs(match, now);
+              const rows = playerTimes(match, side, uptoMs);
+              const notPlayed = rows.filter((entry) => entry.status === "bench" && !entry.hasPlayed);
+              return (
+                <div key={side} className="sanction-col">
+                  <h4>{(side === "home" ? match.homeTeam : match.awayTeam) || (side === "home" ? "Heim" : "Gast")}</h4>
+                  {notPlayed.length > 0 && (
+                    <p className="collapsible-hint">
+                      Noch nicht eingesetzt: {notPlayed.map((entry) => entry.name || `#${entry.number}`).join(", ")}
+                    </p>
+                  )}
+                  {rows.length === 0 ? <p className="collapsible-hint">Keine Aufstellung erfasst.</p> : (
+                    <table className="playtime-table">
+                      <thead><tr><th></th><th>Nr.</th><th>Name</th><th>Zeit</th></tr></thead>
+                      <tbody>
+                        {rows.map((entry) => (
+                          <tr key={entry.key} className={entry.currentlyOn ? "row-on" : ""}>
+                            <td>
+                              {entry.status === "bench" && !entry.hasPlayed
+                                ? <span className="playtime-flag" title="Noch nicht eingesetzt">●</span>
+                                : entry.hasPlayed
+                                  ? <span className="playtime-check" title="Im Spiel eingesetzt">✓</span>
+                                  : null}
+                            </td>
+                            <td>{entry.number || "–"}</td>
+                            <td>{entry.name || "–"}</td>
+                            <td>{formatClock(entry.onPitchMs)}{entry.currentlyOn ? " ·" : ""}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   )}
                 </div>
               );

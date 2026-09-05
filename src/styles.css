@@ -522,6 +522,12 @@ label:not(.tenant-check):not(.checkbox-field):not(.team):has(select:focus) > spa
 .sanction-col li { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12px; padding: 6px 0; border-bottom: 1px solid var(--line); }
 .sanction-marks { display: flex; align-items: center; gap: 5px; }
 .sanction-marks .mini-card { width: 9px; height: 14px; }
+.playtime-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.playtime-table th { text-align: left; padding: 4px 6px; color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: .08em; font-weight: 800; }
+.playtime-table td { padding: 5px 6px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.playtime-table tr.row-on td { font-weight: 750; }
+.playtime-check { color: var(--brand-green); font-weight: 800; }
+.playtime-flag { color: var(--danger); font-size: 9px; }
 .sanction-tp { font-size: 10px; color: #7a5a12; font-weight: 700; }
 
 .stats-panel { display: flex; flex-direction: column; gap: 14px; }
