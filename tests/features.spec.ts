@@ -199,3 +199,24 @@ test("stellt einen Gegner-Spieler per Skizze auf eine Position", async ({ page }
   await expect(pitch.locator(".pitch-slot.filled")).toContainText("Meier");
   await expect(pitch.getByText(/Ohne Position/)).toHaveCount(0);
 });
+
+test("stellt einen Spieler per Tastatur auf eine Pitch-Position (kein Maus-Klick nötig)", async ({ page }) => {
+  await openApp(page);
+  await page.getByRole("button", { name: "Mannschaftsaufstellungen" }).click();
+  const away = page.locator(".roster-editor > div").nth(1);
+  await away.locator("input[type='file']").setInputFiles({
+    name: "team.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from("Name Künstlername;Vorname Rufname\nMeier ;Anna (w)\nKern ;Ben (m)", "utf-8"),
+  });
+  await away.locator(".roster-group.group-out .roster-table tbody tr").first().locator(".status-seg.seg-start").click();
+
+  const pitch = away.locator(".pitch-view");
+  const firstSlot = pitch.locator(".pitch-slot").first();
+  await firstSlot.focus();
+  await expect(firstSlot).toBeFocused();
+  await page.keyboard.press("Enter"); // .pitch-slot is a real <button> — native Enter/Space activation
+  await pitch.locator(".pitch-assign select").focus();
+  await pitch.locator(".pitch-assign select").selectOption({ label: "Anna Meier" });
+  await expect(pitch.locator(".pitch-slot.filled")).toContainText("Meier");
+});

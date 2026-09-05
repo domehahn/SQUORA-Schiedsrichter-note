@@ -372,6 +372,12 @@ label:not(.tenant-check):not(.checkbox-field):not(.team):has(select:focus) > spa
 }
 .pitch-slot.filled .pitch-slot-num { background: #0b2559; }
 .pitch-slot.active .pitch-slot-num { outline: 3px solid #ffd166; outline-offset: 1px; }
+/* Keyboard focus: outline the circular badge, not the auto-width button box
+   (which also wraps the name pill below it and would look oddly offset) —
+   .pitch-slot is a real <button>, natively Tab-reachable and Enter/Space-
+   activatable, this just makes "which slot is focused" clearly visible. */
+.pitch-slot:focus-visible { outline: none; }
+.pitch-slot:focus-visible .pitch-slot-num { outline: 3px solid #ffd166; outline-offset: 2px; }
 .pitch-slot-name {
   font-size: 9.5px;
   font-weight: 750;
