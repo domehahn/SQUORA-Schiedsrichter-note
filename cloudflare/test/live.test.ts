@@ -92,4 +92,15 @@ describe("public live ticker", () => {
     const res = await SELF.fetch(shareUrl(TEAM_A), { method: "POST", headers: { Cookie: cookieA, Origin: "https://evil.invalid", "Content-Type": "application/json" } });
     expect(res.status).toBe(403);
   });
+
+  it("a normal 5s-poll viewing pattern never hits a rate limit — the public live endpoint uses its own limiter, not LOGIN_RATE_LIMITER (10/60s)", async () => {
+    const { cookieA } = await seedTwoTenants();
+    await SELF.fetch(stateUrl(TEAM_A), { method: "PUT", headers: jsonHeaders(cookieA), body: JSON.stringify({ version: 0, archive: [], deletedIds: [], tournaments: [], teams: [], current: draftWithGoal }) });
+    const { token } = await (await SELF.fetch(shareUrl(TEAM_A), { method: "POST", headers: jsonHeaders(cookieA) })).json<{ token: string }>();
+    // More requests than LOGIN_RATE_LIMITER's own 10/60s ceiling — all must
+    // still succeed, proving this really is a separate limiter.
+    for (let i = 0; i < 15; i += 1) {
+      expect((await SELF.fetch(publicUrl(token))).status).toBe(200);
+    }
+  });
 });

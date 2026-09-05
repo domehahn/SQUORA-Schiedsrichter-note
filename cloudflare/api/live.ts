@@ -97,9 +97,15 @@ export async function disableLiveShare(request: Request, env: Env, auth: AuthCon
 
 /** Public, unauthenticated: score + generic event log with shirt numbers only. No player names, no free text, no ids. */
 export async function getPublicLive(request: Request, env: Env, token: string, requestId: string): Promise<Response> {
-  await enforceRateLimit(env.LOGIN_RATE_LIMITER, [clientIp(request), "live.view"]);
   if (typeof token !== "string" || token.length < 20 || token.length > 64) throw NOT_FOUND;
   const tokenHash = await sha256(token);
+  // Dedicated limiter (not LOGIN_RATE_LIMITER): a 5s-polling spectator page
+  // needs a much higher ceiling than a login form, and several viewers
+  // commonly share one NAT IP. Keyed on ip + a token-hash prefix (never the
+  // raw token, which must never appear in a rate-limiter key/log) so one
+  // token's abuse doesn't throttle every other live match's viewers sharing
+  // that IP, without ever storing/logging the actual bearer credential.
+  await enforceRateLimit(env.LIVE_RATE_LIMITER, [clientIp(request), `live:${tokenHash.slice(0, 16)}`]);
   const row = await env.DB.prepare("SELECT payload_json AS payloadJson, updated_at AS updatedAt FROM team_drafts WHERE share_token_hash=?")
     .bind(tokenHash).first<{ payloadJson: string; updatedAt: string }>();
   if (!row) throw NOT_FOUND;

@@ -21,7 +21,12 @@
   "ratelimits": [
     { "name": "LOGIN_RATE_LIMITER", "namespace_id": "2026090301", "simple": { "limit": 10, "period": 60 } },
     { "name": "EXPORT_RATE_LIMITER", "namespace_id": "2026090311", "simple": { "limit": 5, "period": 60 } },
-    { "name": "IMPORT_RATE_LIMITER", "namespace_id": "2026090312", "simple": { "limit": 20, "period": 60 } }
+    { "name": "IMPORT_RATE_LIMITER", "namespace_id": "2026090312", "simple": { "limit": 20, "period": 60 } },
+    // The live ticker polls every 5s (12 req/min/viewer) and several
+    // spectators commonly share one NAT IP; keyed on ip+tokenHashPrefix
+    // (not the raw token) so this stays generous for normal viewing while
+    // still bounding abuse of one token. See cloudflare/api/live.ts.
+    { "name": "LIVE_RATE_LIMITER", "namespace_id": "2026090313", "simple": { "limit": 180, "period": 60 } }
   ],
   "routes": [
     { "pattern": "squora.de/schiedsrichter-note*", "zone_name": "squora.de" }
@@ -50,7 +55,8 @@
       "ratelimits": [
         { "name": "LOGIN_RATE_LIMITER", "namespace_id": "2026090302", "simple": { "limit": 20, "period": 60 } },
         { "name": "EXPORT_RATE_LIMITER", "namespace_id": "2026090321", "simple": { "limit": 20, "period": 60 } },
-        { "name": "IMPORT_RATE_LIMITER", "namespace_id": "2026090322", "simple": { "limit": 60, "period": 60 } }
+        { "name": "IMPORT_RATE_LIMITER", "namespace_id": "2026090322", "simple": { "limit": 60, "period": 60 } },
+        { "name": "LIVE_RATE_LIMITER", "namespace_id": "2026090323", "simple": { "limit": 300, "period": 60 } }
       ]
     },
     "staging": {
@@ -62,7 +68,8 @@
       "ratelimits": [
         { "name": "LOGIN_RATE_LIMITER", "namespace_id": "2026090303", "simple": { "limit": 10, "period": 60 } },
         { "name": "EXPORT_RATE_LIMITER", "namespace_id": "2026090331", "simple": { "limit": 5, "period": 60 } },
-        { "name": "IMPORT_RATE_LIMITER", "namespace_id": "2026090332", "simple": { "limit": 20, "period": 60 } }
+        { "name": "IMPORT_RATE_LIMITER", "namespace_id": "2026090332", "simple": { "limit": 20, "period": 60 } },
+        { "name": "LIVE_RATE_LIMITER", "namespace_id": "2026090333", "simple": { "limit": 180, "period": 60 } }
       ],
       "routes": [
         { "pattern": "schiri-staging.squora.de", "custom_domain": true }
